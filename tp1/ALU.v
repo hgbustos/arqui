@@ -18,6 +18,17 @@ module ALU #(
     output reg           co
 );
 
+    // --- Definición de Opcodes ---
+    // El uso de 'localparam' mejora la legibilidad y mantenibilidad del código.
+    localparam OP_ADD = 6'b100000;
+    localparam OP_SUB = 6'b100010;
+    localparam OP_AND = 6'b100100;
+    localparam OP_OR  = 6'b100101;
+    localparam OP_XOR = 6'b100110;
+    localparam OP_SRA = 6'b000011;
+    localparam OP_SRL = 6'b000010;
+    localparam OP_NOR = 6'b100111;
+
     reg [N:0] sum_extended;
 
     always @(*) begin
@@ -27,37 +38,37 @@ module ALU #(
         sum_extended = {N+1{1'b0}};
 
         case (opcode)
-            6'b100000: begin // ADD
+            OP_ADD: begin
                 sum_extended = {1'b0, in1} + {1'b0, in2};
                 out = sum_extended[N-1:0];
                 co  = sum_extended[N];
             end
 
-            6'b100010: begin // SUB
+            OP_SUB: begin
                 {co, out} = in1 - in2;
             end
 
-            6'b100100: begin // AND
+            OP_AND: begin
                 out = in1 & in2;
             end
 
-            6'b100101: begin // OR
+            OP_OR: begin
                 out = in1 | in2;
             end
 
-            6'b100110: begin // XOR
+            OP_XOR: begin
                 out = in1 ^ in2;
             end
 
-            6'b000011: begin // SRA (Shift Right Arithmetic)
+            OP_SRA: begin
                 out = $signed(in1) >>> in2;
             end
 
-            6'b000010: begin // SRL (Shift Right Logical)
+            OP_SRL: begin
                 out = in1 >> in2;
             end
 
-            6'b100111: begin // NOR
+            OP_NOR: begin
                 out = ~(in1 | in2);
             end
 
@@ -68,7 +79,6 @@ module ALU #(
         endcase
     end
 
-    // El flag 'zero' es '1' solo si todos los bits de salida son cero.
     assign zero = ~|out;
 
 endmodule
