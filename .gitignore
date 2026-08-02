@@ -1,0 +1,17 @@
+# Artefactos de simulación (Icarus Verilog / vvp)
+*.vvp
+*.vcd
+
+# Python (tp2/host/)
+__pycache__/
+*.pyc
+
+# Cachés y builds de proyectos Vivado
+*.cache/
+*.hw/
+*.ip_user_files/
+*.runs/
+*.sim/
+*.Xil/
+*.jou
+*.log
