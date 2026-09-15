@@ -34,6 +34,7 @@ module tb_uart_rx;
         .rst_i          (tb_rst),
         .rx_i           (tb_rx),
         .s_tick_i       (tb_s_tick),
+        .parity_en_i    (1'b0), // este testbench valida el camino sin paridad; ver tb_uart_rx_parity.v para parity_en_i=1
         .dout_o         (tb_dout),
         .rx_done_tick_o (tb_rx_done_tick)
     );

@@ -51,11 +51,12 @@ module tb_uart_alu_top;
         .BAUD_RATE2 (BAUD_RATE2),
         .BAUD_RATE3 (BAUD_RATE3)
     ) dut (
-        .clk_i      (tb_clk),
-        .rst_i      (tb_rst),
-        .rx_i       (tb_rx),
-        .baud_sel_i (tb_baud_sel),
-        .tx_o       (tb_tx)
+        .clk_i       (tb_clk),
+        .rst_i       (tb_rst),
+        .rx_i        (tb_rx),
+        .baud_sel_i  (tb_baud_sel),
+        .parity_en_i (1'b0), // este testbench valida el camino sin paridad; ver tb_uart_alu_top_parity.v para parity_en_i=1
+        .tx_o        (tb_tx)
     );
 
     // --- Checker: decodifica tx_o de forma independiente del DUT ---
@@ -87,12 +88,23 @@ module tb_uart_alu_top;
         .rst_i          (tb_rst),
         .rx_i           (tb_tx),
         .s_tick_i       (chk_tick),
+        .parity_en_i    (1'b0),
         .dout_o         (chk_dout),
         .rx_done_tick_o (chk_rx_done_tick)
     );
 
     initial tb_clk = 0;
     always #(CLK_PERIOD / 2) tb_clk = ~tb_clk;
+
+    // Volcado de senales para inspeccionar en GTKWave (ver tp2/README.md,
+    // "Ver el trafico en GTKWave"). $dumpvars(0, ...) baja recursivamente
+    // por todas las instancias (baud_rate_generator, uart_rx, uart_tx,
+    // uart_interface, alu_link, ALU incluidos) asi que quedan disponibles
+    // los registros de estado de cada FSM, no solo los puertos del top.
+    initial begin
+        $dumpfile("tb_uart_alu_top.vcd");
+        $dumpvars(0, tb_uart_alu_top);
+    end
 
     // Envia un byte UART completo sobre rx_i (start + N datos LSB-primero +
     // stop), a razon de 'bit_cycles' ciclos de clock por bit (depende del

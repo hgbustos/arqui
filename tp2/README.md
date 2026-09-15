@@ -19,7 +19,8 @@ codificación de estados, FSM seguras vs. rápidas).
 tp2/
 ├── rtl/           módulos de diseño (baud_generator, uart_rx/tx, uart_interface,
 │                  alu_link, uart_alu_top)
-├── tb/            testbenches, uno por módulo de rtl/ + tb_uart_alu_top.v (end-to-end)
+├── tb/            testbenches, uno por módulo de rtl/ + tb_uart_alu_top.v (end-to-end),
+│                  más 3 testbenches dedicados a la paridad opcional (parity_en_i=1)
 ├── constraints/   uart_alu_top.xdc (pines Basys 3)
 └── host/          alu_client.py, cliente de línea de comandos por puerto serie
 ```
@@ -215,27 +216,98 @@ en la simulación (`tb_baud_generator.v`, `tb_uart_alu_top.v`) se verifica
 tanto cada preset por separado como el cambio en caliente entre ellos con
 tráfico UART real circulando.
 
+### Paridad opcional en runtime (`parity_en_i`)
+
+El enunciado marca el bit de paridad como opcional en la trama (ver
+"Trama UART" más arriba). La decisión original de este TP fue no
+incluirlo: con sobremuestreo ×16 y muestreo en el punto medio de cada
+bit, el margen de ruido ya alcanza para un enlace tan corto como el de
+este TP (el FTDI que hace de puente USB-serie está integrado en la misma
+placa, no hay un cable largo expuesto a ruido externo).
+
+Se agregó después como capability completa, sin tocar el comportamiento
+por defecto ya verificado. Sigue el mismo patrón que `baud_sel_i`: no es
+un parámetro de compilación sino una **entrada en tiempo real**
+(`parity_en_i`, pensada para SW2 de la Basys3) — se puede prender/apagar
+sin resintetizar. Es únicamente on/off: cuando está activa, la paridad
+siempre es **EVEN** (única variante soportada — no hay forma de elegir
+ODD, ni por switch ni por parámetro, para no complicar la interfaz sin
+un beneficio real):
+
+- `uart_rx`/`uart_tx` ganan `parity_en_i` (switch en bajo = comportamiento
+  original bit a bit idéntico; en alto = con paridad EVEN). `uart_alu_top`
+  reenvía `parity_en_i` tal cual a los dos — los dos extremos de un
+  enlace tienen que coincidir en la trama que usan.
+- **Se latchea una sola vez por trama**, al detectar el start bit (Rx) o
+  al aceptar el byte a transmitir (Tx) — no se lee en vivo durante toda
+  la recepción/transmisión. Así, si alguien mueve el switch a mitad de un
+  envío, no corrompe ESE byte, solo afecta al próximo. Mismo criterio de
+  "cambiar solo entre transacciones completas" que ya vale para
+  `baud_sel_i`, pero acá además garantizado por diseño en vez de depender
+  solo de la disciplina del operador. Probado explícitamente en
+  simulación: `tb_uart_alu_top_parity.v` cambia el switch en caliente
+  entre dos operaciones y confirma que el sistema sigue funcionando de
+  los dos lados del cambio.
+- Ante un error de paridad, **el byte no se descarta**: `uart_rx` lo
+  sigue entregando igual por `dout_o`/`rx_done_tick_o`, y levanta
+  `parity_err_o` aparte como flag informativo. Este protocolo no tiene
+  ACK/NACK ni forma de pedir un reenvío, así que descartar en silencio
+  desincronizaría la FSM de comandos de `alu_link` de una forma peor que
+  la que se intenta evitar (ver "Lecciones de diseño" más abajo).
+- `uart_alu_top` expone `parity_err_o` a nivel de top como señal
+  informativa (no se propaga al protocolo `CMD_LOAD`/`CMD_READ` de
+  `alu_link`), mapeada a LD0 de la Basys3 (`U16` en el `.xdc`) — ambos
+  pines (LD0/`U16` y SW2/`W16`) ya se verificaron contra el master XDC
+  oficial de Digilent.
+- Con SW2 abajo el comportamiento es bit a bit idéntico al ya sintetizado,
+  implementado y probado en una Basys 3 real (ver más abajo) — **una
+  sola síntesis alcanza para las dos configuraciones**, no hace falta
+  recompilar para pasar de sin paridad a con paridad, solo mover el
+  switch.
+- `alu_client.py`/`alu_gui.py` también soportan paridad (flag `--parity`
+  / checkbox "Paridad EVEN activa" en la GUI, apagado por defecto) — ver
+  "Cliente de host en Python" más abajo. Es la contraparte obligatoria
+  del lado PC: la paridad la arma/verifica en hardware el puente FTDI de
+  la placa, no el script Python, así que los dos extremos tienen que
+  coincidir para que el enlace funcione en absoluto (no es un "mejor si
+  coincide", es un requisito) — acá el operador tiene que mirar en qué
+  posición está SW2 y activar/desactivar lo mismo del lado PC, no hay
+  forma de que el software lo detecte solo.
+
+**Cómo probarlo en hardware real:** una sola síntesis (la que ya está
+hecha, o una nueva si se resintetiza por cualquier otro motivo) sirve
+para las dos configuraciones — programar la placa y:
+- **SW2 abajo** (default): probar exactamente como antes, sin la flag
+  `--parity` (o el checkbox destildado en la GUI).
+- **SW2 arriba**: agregar `--parity` del lado host (o tildar el checkbox
+  en la GUI). Si se te olvida este paso, la comunicación no va a
+  funcionar en absoluto — no es un error sutil, los dos extremos del
+  framing físico quedan desalineados.
+
 ### Yendo a hardware real (Basys 3)
 
 `tp2/constraints/uart_alu_top.xdc` asigna los pines físicos de la Basys3
 (`clk_i`→W5, `rst_i`→BTN_CENTER, `rx_i`/`tx_o`→puente FTDI integrado,
 `baud_sel_i[0]`→SW0, `baud_sel_i[1]`→SW1). Para el preset por defecto
-(`BAUD_RATE1`=19200, `baud_sel_i=2'b01`): **SW0 arriba, SW1 y el resto
-abajo** (bit0=SW0 es el menos significativo, no al revés — es fácil
-confundirse acá). El default de `CLK_FREQ` en `uart_alu_top.v` se
+(`BAUD_RATE1`=19200, `baud_sel_i=2'b01`): **SW0 arriba, SW1 abajo**
+(bit0=SW0 es el menos significativo, no al revés — es fácil confundirse
+acá; SW2 es independiente de esto, controla `parity_en_i`, ver "Paridad
+opcional en runtime" más abajo). El default de `CLK_FREQ` en `uart_alu_top.v` se
 corrigió a `100_000_000` porque esa es la frecuencia real del oscilador de
 la placa (antes estaba en 50MHz, un valor genérico que solo tenía sentido
 en simulación — de haberse sintetizado así, todos los baud rates hubiesen
 salido a la mitad de la velocidad real y el UART no habría sincronizado con
-la PC). Ya se creó el proyecto en Vivado, se sintetizó/implementó y se
-generó el bitstream (`tp2/synt/tp2_uart/`, `write_bitstream` completó sin
-errores), y se probó en una Basys3 real hablándole con `alu_client.py` por
-USB. Queda como nota menor (no bloqueante, no se tocó): el log de
-implementación deja un DRC warning (`PDRC-153`, gated clock) sobre
-`baud_sel_reg` en `baud_generator.v` — Vivado decidió implementar ese
-registro con clock gateado en vez de usar el pin de enable, que en general
-es mejor evitar por área/performance aunque acá no impidió que la placa
-funcionara correctamente.
+la PC). Ya se creó el proyecto en Vivado, se sintetizó/implementó y se generó el
+bitstream (`tp2/synt/tp2_uart/`) dos veces: una primera vez (31/07) con
+el diseño base, ya probada en una Basys3 real hablándole con
+`alu_client.py` por USB (ver informe 4.3); y una segunda (04/09), ya con
+la capability de paridad y el pin de `parity_en_i` corregido (ver
+"Paridad opcional en runtime" más arriba). Las dos completaron
+`write_bitstream` sin errores de DRC; queda un warning no bloqueante
+(`PDRC-153`, gated clock sobre lógica interna de `baud_generator.v`) que
+no afecta timing ni el funcionamiento ya observado en hardware real, así
+que se documenta así y no se persigue más. Falta todavía probar esta
+segunda síntesis en la placa física.
 
 ### Cliente de host en Python (`tp2/host/`)
 
@@ -243,30 +315,70 @@ funcionara correctamente.
 habla este protocolo desde una PC real: arma el `CMD_LOAD` con la
 operación pedida, dispara uno o más `CMD_READ` (con `--reread N` se puede
 pedir el mismo resultado varias veces sin recargar, para probar en vivo la
-razón de ser del comando separado) y parsea la respuesta. Uso:
+razón de ser del comando separado) y parsea la respuesta. La flag
+`--parity` (apagada por defecto) activa el bit de paridad EVEN del
+puerto — tiene que coincidir con la posición del switch `parity_en_i`
+(ver "Paridad opcional" más arriba). Uso:
 
 ```
 pip install -r tp2/host/requirements.txt
 python tp2/host/alu_client.py --port COM12 --baud 19200 ADD 100 50
+python tp2/host/alu_client.py --port COM12 --baud 19200 --parity ADD 100 50
 ```
 
 ### GUI de escritorio (`tp2/host/alu_gui.py`)
 
 Pensada para la defensa: en vez de escribir comandos, `tp2/host/alu_gui.py`
-(tkinter, sin dependencias más allá de `pyserial`) permite elegir puerto y
-baud rate, armar y enviar un `CMD_LOAD` con opcode/A/B desde combos, pedir
-`CMD_READ` (o releerlo varias veces sin recargar, con un botón dedicado que
-repite la operación N veces) y ver el resultado con indicadores de `co`/
-`zero`. Un log en la parte inferior muestra, byte a byte, exactamente lo que
-se envía y se recibe — útil para mostrar en vivo cómo se arma cada trama del
-protocolo. No reimplementa el protocolo: reutiliza el armado/parseo de
-paquetes de `alu_client.py` (un solo lugar si el protocolo cambia). La
+(tkinter, sin dependencias más allá de `pyserial`) permite elegir puerto,
+baud rate y paridad, armar y enviar un `CMD_LOAD` con opcode/A/B desde
+combos, pedir `CMD_READ` (o releerlo varias veces sin recargar, con un botón
+dedicado que repite la operación N veces) y ver el resultado con indicadores
+de `co`/`zero`. Un log en la parte inferior muestra, byte a byte, exactamente
+lo que se envía y se recibe — útil para mostrar en vivo cómo se arma cada
+trama del protocolo. No reimplementa el protocolo: reutiliza el armado/
+parseo de paquetes de `alu_client.py` (un solo lugar si el protocolo
+cambia) — la apertura del puerto en sí, en cambio, está en los dos
+scripts por separado, así que el combo de paridad usa el mismo mapeo
+`PARITY_TO_PYSERIAL` importado de `alu_client.py` en vez de duplicarlo. La
 comunicación serie corre en un thread aparte del `mainloop` de tkinter para
 no congelar la UI mientras espera una respuesta.
 
 ```
 python tp2/host/alu_gui.py
 ```
+
+## Ver el tráfico en GTKWave
+
+Los dos testbenches end-to-end (`tb_uart_alu_top.v`,
+`tb_uart_alu_top_parity.v`) vuelcan un `.vcd` cada vez que se corren
+(`$dumpfile`/`$dumpvars(0, ...)` recursivo sobre todo el árbol de
+instancias — no solo el top, también los registros internos de cada
+FSM) — no hace falta nada especial, el mismo `iverilog`/`vvp` de siempre
+ya lo genera en el directorio donde se corre `vvp`:
+
+```bash
+iverilog -g2012 -o sim tp2/tb/tb_uart_alu_top.v tp2/rtl/uart_alu_top.v \
+  tp2/rtl/baud_generator.v tp2/rtl/uart_rx.v tp2/rtl/uart_tx.v \
+  tp2/rtl/uart_interface.v tp2/rtl/alu_link.v tp1/ALU.v
+vvp sim              # genera tb_uart_alu_top.vcd en el directorio actual
+gtkwave tb_uart_alu_top.vcd
+```
+
+(la versión `_parity` compila igual, cambiando `tb_uart_alu_top.v` por
+`tb_uart_alu_top_parity.v` y el nombre del `.vcd`; las dos necesitan
+`-g2012`, ver 4.1 del informe).
+
+Señales útiles para arrastrar al panel de ondas (buscar por instancia en
+el árbol de jerarquía de GTKWave — el DUT se llama `dut`):
+
+| Señal | Para qué sirve |
+|---|---|
+| `tb_rx` / `tb_tx` | La línea serie cruda — señalar a ojo el bit de start, cada bit de dato (LSB primero), el de paridad si está activo, y el stop. |
+| `dut.u_uart_rx.state_reg`, `dut.u_uart_tx.state_reg` | Estado de cada FSM en cada instante. Clic derecho → Data Format → Decimal para no leer binario crudo. Legend: `0=IDLE 1=START 2=DATA 3=PARITY 4=STOP` (Rx/Tx). |
+| `dut.u_alu_link.state_reg` | Estado del protocolo de aplicación. Legend: `0=RECV_CMD 1=RECV_OP 2=RECV_A 3=RECV_B 4=SEND_RESULT 5=WAIT_RESULT_SENT 6=SEND_STATUS`. |
+| `dut.u_uart_rx.tick_cnt_reg`, `dut.u_uart_rx.bit_idx_reg` | El sobremuestreo ×16 y en qué bit de dato está parado — para mostrar por qué el muestreo cae en el punto medio de cada bit. |
+| `dut.u_interface.rx_empty_o`, `dut.u_interface.tx_full_o`, `dut.u_alu_link.rd_o`, `dut.u_alu_link.wr_o` | El handshake entre `alu_link` y el Interface Circuit. |
+| `dut.u_uart_rx.parity_err_o` (solo en `tb_uart_alu_top_parity.vcd`) | Se mantiene en 0 en todo este testbench (no inyecta ruido). Para *ver* un `1` de verdad, correr `tb_uart_rx_parity.v` en vez de este — ese sí corrompe paridad a propósito. |
 
 ## Estado de avance
 
@@ -279,6 +391,7 @@ python tp2/host/alu_gui.py
 - [x] Cliente de host en Python (`tp2/host/alu_client.py`)
 - [x] Sintetizado, implementado y probado en una Basys 3 real (`tp2/synt/`)
 - [x] GUI de escritorio para la defensa (`tp2/host/alu_gui.py`)
+- [x] Paridad opcional en runtime (`parity_en_i`, siempre EVEN), switch en bajo por defecto — ver "Paridad opcional" más arriba
 
 TP2 completo. Todos los módulos tienen su testbench verificado con Icarus
 Verilog (`iverilog`/`vvp`), no solo revisados a ojo: `tb_baud_generator.v`
@@ -286,9 +399,19 @@ Verilog (`iverilog`/`vvp`), no solo revisados a ojo: `tb_baud_generator.v`
 `tb_uart_tx.v` (16/16), `tb_uart_interface.v` (17/17), `tb_alu_link.v`
 (30/30, protocolo CMD_LOAD/CMD_READ a alta velocidad simulando pulsos) y
 `tb_uart_alu_top.v` (21/21, end-to-end con timing de UART real de punta a
-punta, incluyendo cambio de baud rate en caliente entre operaciones). Las 6
-simulaciones se re-verificaron de forma independiente con Icarus Verilog
-12.0, sin errores.
+punta, incluyendo cambio de baud rate en caliente entre operaciones). Las
+9 simulaciones (las 6 originales + las 3 de paridad, ver abajo) se
+verificaron con Icarus Verilog 12.0, sin errores.
+
+Testbenches de paridad (`parity_en_i=1`, sin modificar ninguno de los 6
+anteriores): `tb_uart_rx_parity.v` (34/34, paridad EVEN correcta aceptada
+sin error y paridad corrompida inyectada a propósito, detectada sin
+perder el byte), `tb_uart_tx_parity.v` (17/17, loopback contra `uart_rx`
+con paridad activa) y `tb_uart_alu_top_parity.v` (8/8, end-to-end, incluye cambio de
+`parity_en_i` en caliente entre dos operaciones). `tb_alu_link.v`,
+`tb_uart_alu_top.v` y `tb_uart_alu_top_parity.v` necesitan compilarse con
+`iverilog -g2012` (declaran variables locales dentro de un bloque sin
+nombre); el resto compila con las opciones por defecto.
 
 ## Lecciones de diseño (de los bugs que aparecieron al integrar)
 

@@ -5,6 +5,20 @@
 // Implementa una ALU parametrizable de N bits que realiza operaciones
 // aritméticas y lógicas basadas en un 'opcode'. Este módulo es puramente
 // combinacional.
+//
+// Extensión TP3: se agregaron SLL/SLT/SLTU (aditivo, no se tocó ninguno de
+// los 8 opcodes ni comportamientos originales de TP1/TP2) para que esta
+// misma ALU, validada en TP1 standalone y operada por UART en TP2, sea
+// también la ALU de la etapa EX del pipeline RISC-V de TP3 (instanciada con
+// N=32, decodificada por tp3/rtl/core/alu_control.v). Los OP_* son
+// etiquetas de control internas (nunca forman parte de una instrucción,
+// solo tienen que coincidir bit a bit con alu_control.v): SLL no usa
+// 6'b000000 porque tp1/tb_alu.v ya lo reserva como probe de "opcode
+// inválido" (ver ese testbench); se usa el próximo código libre de la
+// familia de shifts. El enmascarado del shift amount a los bits bajos que
+// exige RV32I (in2[4:0] para N=32) es responsabilidad de quien instancia
+// la ALU (tp3/rtl/core/riscv_core.v), no de este módulo genérico: igual
+// que SRA/SRL ya hacían, el shift acá usa 'in2' crudo tal cual llega.
 // =============================================================================
 module ALU #(
     parameter N = 8
@@ -28,6 +42,10 @@ module ALU #(
     localparam OP_SRA = 6'b000011;
     localparam OP_SRL = 6'b000010;
     localparam OP_NOR = 6'b100111;
+    // --- Opcodes nuevos (TP3, RV32I) ---
+    localparam OP_SLL  = 6'b000001; // no usa 000000: ver nota arriba (reservado por tb_alu.v)
+    localparam OP_SLT  = 6'b101010;
+    localparam OP_SLTU = 6'b101011;
 
     reg [N:0] sum_extended;
 
@@ -70,6 +88,18 @@ module ALU #(
 
             OP_NOR: begin
                 out = ~(in1 | in2);
+            end
+
+            OP_SLL: begin
+                out = in1 << in2;
+            end
+
+            OP_SLT: begin
+                out = {{(N-1){1'b0}}, $signed(in1) < $signed(in2)};
+            end
+
+            OP_SLTU: begin
+                out = {{(N-1){1'b0}}, in1 < in2};
             end
 
             default: begin

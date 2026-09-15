@@ -22,7 +22,8 @@ from tkinter import ttk
 import serial
 import serial.tools.list_ports
 
-from alu_client import BAUD_TO_SEL, CMD_LOAD, CMD_READ, OpCode, build_load_packet, build_read_packet, parse_response
+from alu_client import (BAUD_TO_SEL, CMD_LOAD, CMD_READ, OpCode,
+                         build_load_packet, build_read_packet, parse_response, pyserial_parity)
 
 POLL_MS = 50  # frecuencia con la que la GUI drena la cola de eventos del worker
 
@@ -75,6 +76,12 @@ class AluGui(tk.Tk):
         ttk.Label(conn, textvariable=self.switch_hint_var, foreground="#555").grid(
             row=1, column=0, columnspan=5, sticky="w", padx=6)
         self._update_switch_hint()
+
+        self.parity_var = tk.BooleanVar(value=False)  # False = switch en bajo, el default probado en hardware
+        parity_check = ttk.Checkbutton(conn, text="Paridad EVEN activa", variable=self.parity_var)
+        parity_check.grid(row=2, column=0, columnspan=2, sticky="w", padx=6, pady=4)
+        ttk.Label(conn, text="(tiene que coincidir con SW2 de la FPGA -- parity_en_i, sin feedback automatico)",
+                  foreground="#555").grid(row=2, column=2, columnspan=4, sticky="w", padx=6)
 
         self.connect_btn = ttk.Button(conn, text="Conectar", command=self._toggle_connect)
         self.connect_btn.grid(row=0, column=5, rowspan=2, padx=10)
@@ -157,7 +164,7 @@ class AluGui(tk.Tk):
         sel = BAUD_TO_SEL[baud]
         sw0 = "arriba" if sel & 0b01 else "abajo"
         sw1 = "arriba" if sel & 0b10 else "abajo"
-        self.switch_hint_var.set(f"baud_sel_i={sel:02b} -> SW0 {sw0}, SW1 {sw1} (resto de los switches abajo)")
+        self.switch_hint_var.set(f"baud_sel_i={sel:02b} -> SW0 {sw0}, SW1 {sw1}")
 
     def _update_opcode_hint(self):
         op = OpCode[self.op_var.get()]
@@ -218,15 +225,16 @@ class AluGui(tk.Tk):
             self._log("Error: elegi un puerto antes de conectar.")
             return
         baud = int(self.baud_var.get())
+        parity = self.parity_var.get()
         self.connect_btn.configure(state="disabled")
 
         def worker():
             try:
-                ser = serial.Serial(port, baud, timeout=1.0)
+                ser = serial.Serial(port, baud, parity=pyserial_parity(parity), timeout=1.0)
             except serial.SerialException as e:
                 self.events.put(("connect_failed", str(e)))
                 return
-            self.events.put(("connected", ser, port, baud))
+            self.events.put(("connected", ser, port, baud, parity))
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -342,11 +350,12 @@ class AluGui(tk.Tk):
                 kind = event[0]
 
                 if kind == "connected":
-                    _, ser, port, baud = event
+                    _, ser, port, baud, parity = event
                     self.ser = ser
                     self._set_connected(True)
                     self.connect_btn.configure(state="normal")
-                    self._log(f"Conectado a {port} @ {baud} bps.")
+                    paridad_str = "EVEN" if parity else "ninguna"
+                    self._log(f"Conectado a {port} @ {baud} bps, paridad={paridad_str}.")
                 elif kind == "connect_failed":
                     self._log(f"Error abriendo puerto: {event[1]}")
                     self.connect_btn.configure(state="normal")

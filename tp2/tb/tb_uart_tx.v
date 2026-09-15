@@ -41,6 +41,7 @@ module tb_uart_tx;
         .tx_start_i     (tb_tx_start),
         .s_tick_i       (tb_s_tick),
         .din_i          (tb_din),
+        .parity_en_i    (1'b0), // este testbench valida el camino sin paridad; ver tb_uart_tx_parity.v para parity_en_i=1
         .tx_done_tick_o (tb_tx_done_tick),
         .tx_o           (tb_tx_line)
     );
@@ -54,6 +55,7 @@ module tb_uart_tx;
         .rst_i          (tb_rst),
         .rx_i           (tb_tx_line),
         .s_tick_i       (tb_s_tick),
+        .parity_en_i    (1'b0),
         .dout_o         (chk_dout),
         .rx_done_tick_o (chk_rx_done_tick)
     );

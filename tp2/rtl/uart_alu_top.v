@@ -19,21 +19,37 @@
 // 'baud_sel_i'. CLK_FREQ=100MHz por defecto porque es la frecuencia real
 // del oscilador de la Basys3 (ver tp2/constraints/uart_alu_top.xdc); si se
 // instancia para simulación con otro CLK_FREQ, hay que pasarlo explícito.
+//
+// Paridad (opcional, 'parity_en_i' en bajo por defecto, siempre EVEN
+// cuando está activa -- única variante soportada, ver uart_rx.v/
+// uart_tx.v): 'parity_en_i' se reenvía tal cual a uart_rx y uart_tx --
+// los dos lados de un mismo enlace tienen que coincidir en la trama que
+// usan, así que no tendría sentido que difirieran entre sí dentro de
+// esta misma instancia. Es una entrada en tiempo real, no un parámetro:
+// pensada para un switch físico de la Basys3 (mismo patrón que
+// 'baud_sel_i'), así se puede probar con y sin paridad sin resintetizar.
+// Con el switch en bajo el comportamiento es bit a bit idéntico al ya
+// verificado en simulación y en la Basys 3 real; 'parity_err_o' queda
+// expuesto al tope como señal informativa (no se propaga a alu_link, que
+// no tiene mecanismo de reintento -- ver uart_rx.v), mapeada a una LED en
+// el .xdc.
 // =============================================================================
 module uart_alu_top #(
-    parameter N          = 8,           // ancho de datos de la ALU / bytes UART
-    parameter CLK_FREQ   = 100_000_000, // clock de la placa (Basys 3)
-    parameter BAUD_RATE0 = 9_600,      // baud_sel_i = 2'b00
-    parameter BAUD_RATE1 = 19_200,     // baud_sel_i = 2'b01 (default equivalente al anterior)
-    parameter BAUD_RATE2 = 57_600,     // baud_sel_i = 2'b10
-    parameter BAUD_RATE3 = 115_200,    // baud_sel_i = 2'b11
-    parameter SB_TICKS   = 16          // ticks de stop bit (16 = 1 bit de stop)
+    parameter N           = 8,           // ancho de datos de la ALU / bytes UART
+    parameter CLK_FREQ    = 100_000_000, // clock de la placa (Basys 3)
+    parameter BAUD_RATE0  = 9_600,      // baud_sel_i = 2'b00
+    parameter BAUD_RATE1  = 19_200,     // baud_sel_i = 2'b01 (default equivalente al anterior)
+    parameter BAUD_RATE2  = 57_600,     // baud_sel_i = 2'b10
+    parameter BAUD_RATE3  = 115_200,    // baud_sel_i = 2'b11
+    parameter SB_TICKS    = 16          // ticks de stop bit (16 = 1 bit de stop)
 )(
     input  wire       clk_i,
     input  wire       rst_i,
     input  wire       rx_i,
-    input  wire [1:0] baud_sel_i, // selector de baud rate en runtime (p.ej. switches de la Basys3)
+    input  wire [1:0] baud_sel_i,  // selector de baud rate en runtime (p.ej. switches de la Basys3)
+    input  wire       parity_en_i, // 0 = sin paridad (comportamiento original); 1 = con paridad (p.ej. otro switch)
     output wire       tx_o,
+    output wire       parity_err_o, // informativo; sin sentido si esta trama no tenia paridad. Ver nota arriba.
 
     // Display de 7 segmentos: este TP no lo usa, pero la Basys3 lo comparte
     // el mismo banco de pines con otras señales, así que hay que manejarlo
@@ -71,15 +87,17 @@ module uart_alu_top #(
     wire         rx_done_tick;
 
     uart_rx #(
-        .DBIT     (N),
-        .SB_TICKS (SB_TICKS)
+        .DBIT       (N),
+        .SB_TICKS   (SB_TICKS)
     ) u_uart_rx (
         .clk_i          (clk_i),
         .rst_i          (rst_i),
         .rx_i           (rx_i),
         .s_tick_i       (s_tick),
+        .parity_en_i    (parity_en_i),
         .dout_o         (rx_dout),
-        .rx_done_tick_o (rx_done_tick)
+        .rx_done_tick_o (rx_done_tick),
+        .parity_err_o   (parity_err_o)
     );
 
     // --- Transmisor UART ---
@@ -88,14 +106,15 @@ module uart_alu_top #(
     wire         tx_done_tick;
 
     uart_tx #(
-        .DBIT     (N),
-        .SB_TICKS (SB_TICKS)
+        .DBIT       (N),
+        .SB_TICKS   (SB_TICKS)
     ) u_uart_tx (
         .clk_i          (clk_i),
         .rst_i          (rst_i),
         .tx_start_i     (tx_start),
         .s_tick_i       (s_tick),
         .din_i          (tx_din),
+        .parity_en_i    (parity_en_i),
         .tx_done_tick_o (tx_done_tick),
         .tx_o           (tx_o)
     );

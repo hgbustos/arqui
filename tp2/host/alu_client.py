@@ -15,9 +15,18 @@ varias veces sin volver a cargar (releer el mismo resultado), que es
 justamente lo que agrega valor sobre un protocolo de "pedido -> respuesta
 automatica" de un solo paso.
 
+--parity activa el bit de paridad EVEN del framing fisico del puerto
+(manejado en hardware por el puente FTDI de la placa, no por este script -
+ver tp2/informe.md 2.4 "capas del enlace"). Tiene que coincidir con la
+posicion del switch parity_en_i de la FPGA (SW2 en la Basys3): igual que
+con --baud, hay que mirar el switch fisico y activar/desactivar esta
+misma flag, no hay negociacion automatica. Sin la flag (default): sin
+paridad, igual que parity_en_i en bajo.
+
 Uso:
     python alu_client.py --port COM12 --baud 19200 ADD 100 50
     python alu_client.py --port COM12 --baud 19200 --reread 2 SUB 10 50
+    python alu_client.py --port COM12 --baud 19200 --parity ADD 100 50
 """
 import argparse
 import sys
@@ -29,6 +38,10 @@ CMD_LOAD = 0x01
 CMD_READ = 0x02
 
 BAUD_TO_SEL = {9600: 0b00, 19200: 0b01, 57600: 0b10, 115200: 0b11}
+
+def pyserial_parity(enabled: bool):
+    """Traduce el on/off de parity_en_i al valor de paridad real de pyserial."""
+    return serial.PARITY_EVEN if enabled else serial.PARITY_NONE
 
 
 class OpCode(IntEnum):
@@ -78,6 +91,10 @@ def main():
     parser.add_argument("--port", required=True, help="Puerto serie, ej. COM12 o /dev/ttyUSB0")
     parser.add_argument("--baud", type=int, default=19200, choices=sorted(BAUD_TO_SEL),
                          help="Baud rate (debe coincidir con baud_sel_i de la FPGA)")
+    parser.add_argument("--parity", action="store_true",
+                         help="Activa el bit de paridad EVEN del puerto (debe coincidir con el "
+                              "switch parity_en_i de la FPGA, SW2 en la Basys3). Sin esta flag: "
+                              "sin paridad, switch en bajo (el default, el probado en hardware).")
     parser.add_argument("--timeout", type=float, default=1.0, help="Timeout de lectura en segundos")
     parser.add_argument("--reread", type=int, default=0,
                          help="Cantidad de CMD_READ adicionales a pedir sin volver a cargar")
@@ -95,11 +112,14 @@ def main():
     sel = BAUD_TO_SEL[args.baud]
     sw0 = "arriba" if sel & 0b01 else "abajo"  # baud_sel_i[0] -> SW0
     sw1 = "arriba" if sel & 0b10 else "abajo"  # baud_sel_i[1] -> SW1
-    print(f"Conectando a {args.port} @ {args.baud} bps "
-          f"(baud_sel_i={sel:02b} -> SW0 {sw0}, SW1 {sw1}, resto de los switches abajo)")
+    paridad_str = "EVEN" if args.parity else "ninguna"
+    print(f"Conectando a {args.port} @ {args.baud} bps, paridad={paridad_str} "
+          f"(baud_sel_i={sel:02b} -> SW0 {sw0}, SW1 {sw1}; SW2 -> parity_en_i, "
+          f"tiene que coincidir con --parity)")
 
     try:
-        ser = serial.Serial(args.port, args.baud, timeout=args.timeout)
+        ser = serial.Serial(args.port, args.baud, parity=pyserial_parity(args.parity),
+                             timeout=args.timeout)
     except serial.SerialException as e:
         print(f"Error abriendo {args.port}: {e}", file=sys.stderr)
         sys.exit(1)

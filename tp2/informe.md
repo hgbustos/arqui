@@ -20,6 +20,7 @@ Bustos Hugo Gabriel - -
    2. [Codificación de estados](#32-codificación-de-estados)
    3. [FSM segura vs. rápida](#33-fsm-segura-vs-rápida)
    4. [Protocolo de aplicación (Interface Circuit + ALU Link)](#34-protocolo-de-aplicación-interface-circuit--alu-link)
+   5. [Paridad opcional (capability agregada)](#35-paridad-opcional-capability-agregada)
 4. [Verificación](#4-verificación)
    1. [Simulación (Icarus Verilog)](#41-simulación-icarus-verilog)
    2. [Síntesis e implementación (Vivado)](#42-síntesis-e-implementación-vivado)
@@ -74,24 +75,31 @@ switches/botones/LEDs.
 | `rtl/uart_interface.v` | *Interface Circuit*: adapta Rx/Tx a una interfaz de 1 byte por sentido (`r_data`/`rd`/`rx_empty`, `w_data`/`wr`/`tx_full`). |
 | `rtl/alu_link.v` | Protocolo de aplicación (comando + trigger) sobre esa interfaz; instancia la `ALU` del TP1. |
 | `rtl/uart_alu_top.v` | Integración de todo lo anterior; único punto de entrada/salida físico. |
-| `tb/*.v` | Un testbench por módulo + un testbench end-to-end (`tb_uart_alu_top.v`). |
+| `tb/*.v` | Un testbench por módulo + un testbench end-to-end (`tb_uart_alu_top.v`), más 3 testbenches dedicados a la capability de paridad opcional (`tb_uart_rx_parity.v`, `tb_uart_tx_parity.v`, `tb_uart_alu_top_parity.v`; ver 3.5). |
 | `constraints/uart_alu_top.xdc` | Mapeo de pines para la Basys 3. |
 | `host/alu_client.py`, `host/alu_gui.py` | Clientes de PC (línea de comandos y GUI) para operar el sistema por puerto serie. |
 
 ### 2.2 Trama UART
 
 ```
- start bit   data byte (8 bits, LSB primero)   stop bit
- (nivel 0)                                     (nivel 1)
-    S      D0 D1 D2 D3 D4 D5 D6 D7                P
+ start bit   data byte (8 bits, LSB primero)   parity bit (opcional)   stop bit
+ (nivel 0)                                     (parity_en_i=1)         (nivel 1)
+    S      D0 D1 D2 D3 D4 D5 D6 D7                    PB                   P
 ```
 
 La línea está en reposo (`idle`) en `1`. El bit de start (`0`) marca el
-comienzo de la trama; le siguen los `N=8` bits de datos (sin bit de
-paridad: es opcional según el enunciado, y se decidió no incluirlo — el
-muestreo en el punto medio de cada bit con sobremuestreo ×16 ya da margen
-de ruido suficiente para un enlace punto a punto de baja distancia como
-este). Cierra con `SB_TICKS=16` ticks de stop (1 bit de stop).
+comienzo de la trama; le siguen los `N=8` bits de datos. El bit de
+paridad es **opcional** (así lo marca el enunciado) y está implementado
+como una capability completa, seleccionable en tiempo real vía un switch
+físico (`parity_en_i`, ver 3.5), pero **deshabilitada por
+defecto** (switch en bajo): con el
+sobremuestreo ×16 y el muestreo en el punto medio de cada bit, el margen
+de ruido ya alcanza para un enlace punto a punto tan corto como este
+(FTDI integrado en la misma placa, ver 2.4) — la justificación para no
+activarla por defecto es la misma que motivó no incluirla originalmente,
+solo que ahora la capability está disponible sin tener que rediseñar la
+FSM si alguna vez hace falta. Cierra con `SB_TICKS=16` ticks de stop (1
+bit de stop).
 
 Al ser comunicación **asíncrona**, no viaja una señal de clock junto con
 los datos: el receptor reconstruye el timing a partir del flanco de bajada
@@ -252,8 +260,11 @@ el sincronizador de doble flip-flop de `uart_rx` (ver 3.3).
 ### 3.2 Codificación de estados
 
 Los tres módulos usan codificación **binaria/secuencial** vía `localparam`
-(Rx/Tx: 4 estados en 2 bits; `alu_link`: 7 estados en 3 bits), la opción
-de **"mínima cantidad de flip-flops"** de la teoría, en vez de one-hot:
+(Rx/Tx: 5 estados en 3 bits — el estado `PARITY` está siempre presente en
+el RTL aunque solo se alcanza con el switch `parity_en_i` en alto, ver
+3.5; `alu_link`: 7
+estados en 3 bits), la opción de **"mínima cantidad de flip-flops"** de la
+teoría, en vez de one-hot:
 
 ```verilog
 localparam [1:0] IDLE  = 2'd0, START = 2'd1, DATA = 2'd2, STOP = 2'd3;
@@ -268,12 +279,14 @@ No hay presión de timing que justifique gastar más flip-flops a cambio de
 velocidad que el diseño no va a usar; binaria es la elección consciente
 que minimiza área sin costo real.
 
-Un detalle concreto de esto en `alu_link`: 7 estados en 3 bits dejan un
-código sin usar (`3'b111`). Ese código solo es alcanzable si el registro
-de estado se corrompe (nunca por transición normal del diseño) — y está
-cubierto por la rama `default` de la FSM segura (ver 3.3), que lo lleva a
-`RECV_CMD` en el siguiente ciclo en vez de dejarlo en un estado no
-definido.
+Un detalle concreto de esto: `alu_link` (7 estados en 3 bits) y, desde que
+se agregó la capability de paridad, también `uart_rx`/`uart_tx` (5 estados
+en 3 bits) dejan códigos sin usar (`3'b111` en `alu_link`; `3'b101`,
+`3'b110` y `3'b111` en Rx/Tx). Esos códigos solo son alcanzables si el
+registro de estado se corrompe (nunca por transición normal del diseño) —
+y están cubiertos por la rama `default` de la FSM segura (ver 3.3), que
+los lleva a `RECV_CMD`/`IDLE` en el siguiente ciclo en vez de dejarlos en
+un estado no definido.
 
 ### 3.3 FSM segura vs. rápida
 
@@ -388,8 +401,8 @@ el primer byte ya se transmitió) antes de intentar el segundo envío — un
 handshake de dos pasos que observa la señal de estado real en vez de
 asumir que un ciclo alcanza.
 
-La ALU del TP1 (`tp1/ALU.v`, combinacional, sin modificar) soporta estas
-operaciones:
+La ALU del TP1 (`tp1/ALU.v`, combinacional, sin modificar para este TP)
+soporta estas operaciones:
 
 | Opcode (bin) | Mnemónico | Operación |
 |---|---|---|
@@ -403,18 +416,117 @@ operaciones:
 | `100111` | NOR | `out = ~(in1 \| in2)` |
 | otro | — | `out = 0`, `co = 0` |
 
+### 3.5 Paridad opcional (capability agregada)
+
+El enunciado marca el bit de paridad como opcional en la trama (ver 2.2),
+y la decisión de diseño original de este TP fue no incluirlo. Se agregó
+después como una **capability completa**, sin tocar el comportamiento
+por defecto ya verificado en simulación y en la Basys 3 real (ver
+4.2/4.3). A diferencia de una primera versión (parámetro de compilación),
+la versión final sigue el mismo criterio que ya usa `baud_sel_i` en
+`baud_generator.v`: una **entrada en tiempo real** (`parity_en_i`),
+pensada para un switch físico de la Basys3, que se puede prender/apagar
+sin resintetizar:
+
+- `uart_rx`/`uart_tx` ganan la entrada `parity_en_i` (switch en bajo =
+  comportamiento original bit a bit idéntico; en alto = con paridad,
+  siempre EVEN — única variante soportada, no hay switch ni parámetro
+  para elegir ODD). Con `parity_en_i` en bajo el estado `PARITY` nunca se
+  alcanza (`DATA` salta directo a `STOP`, igual que antes).
+- **Se latchea una sola vez por trama**, no se lee en vivo durante toda
+  la recepción/transmisión: en `uart_rx` al detectar el start bit
+  (`parity_en_next = parity_en_i` en `IDLE`), en `uart_tx` al aceptar el
+  byte a transmitir (mismo instante en que se calcula `parity_bit_next`,
+  ver abajo). Un registro nuevo (`parity_en_reg`) sostiene ese valor
+  durante el resto de la trama. Esto es lo que hace seguro cambiar el
+  switch en cualquier momento: si se mueve a mitad de una recepción o
+  transmisión, la trama en curso sigue el valor que tenía al arrancar, y
+  solo la próxima trama ve el cambio — mismo criterio de "cambiar solo
+  entre transacciones completas" que ya vale para `baud_sel_i`, pero acá
+  además garantizado por diseño en vez de depender solo de la disciplina
+  del operador.
+- **Dónde se calcula el bit.** En `uart_tx` se calcula una sola vez, al
+  cargar el byte en `IDLE` (`parity_bit_next = ^din_i`), no al final del
+  envío: para cuando la FSM llega al estado `PARITY`, `shift_reg` ya se
+  corrió `DBIT` veces sacando cada bit de datos y no conserva el byte
+  original. En `uart_rx` es al revés: recién
+  se puede calcular la paridad esperada cuando los `DBIT` bits ya están
+  completos en `shift_reg`, así que se hace en el propio estado `PARITY`,
+  comparando contra el bit muestreado en el punto medio (tick 15, igual
+  que cualquier otro bit de la trama).
+- **Ante un error de paridad, el byte no se descarta.** `uart_rx` sigue
+  entregando `dout_o`/`rx_done_tick_o` exactamente igual que si la
+  paridad hubiera sido correcta, y levanta `parity_err_o` aparte como
+  flag informativo (válido en el mismo ciclo en que se lee `dout_o`,
+  mismo patrón de señal registrada que el resto del módulo — ver 3.1).
+  Se decidió así porque este receptor no tiene forma de pedir un
+  reenvío — no hay ACK/NACK en el protocolo de `alu_link` — y descartar
+  el byte en silencio desincronizaría la FSM de comandos de una forma
+  peor que la que se intenta evitar (ver README, "Lecciones de diseño",
+  sobre handshakes que asumen en vez de confirmar).
+- **Codificación de estados.** Agrega un estado `PARITY` entre `DATA` y
+  `STOP` en ambas FSM, que pasa de 4 a 5 estados y de 2 a 3 bits de
+  registro de estado — siempre, incluso con el switch en bajo, para no
+  duplicar la FSM completa por parámetro (ver 3.2 para el detalle de los
+  códigos sin usar que quedan cubiertos por la rama `default`).
+- **Por qué apagado por defecto.** `uart_alu_top` reenvía `parity_en_i`
+  tal cual a Rx y Tx (los dos lados de un mismo enlace tienen que
+  coincidir en la trama que usan) y expone `parity_err_o` al tope como
+  señal informativa, sin propagarla a `alu_link`, mapeada a una LED en el
+  `.xdc`. Con el switch en bajo el sistema queda bit a bit idéntico al ya
+  sintetizado, implementado y probado en hardware real — y **la misma
+  síntesis sirve para las dos configuraciones**: no hace falta
+  resintetizar para pasar de sin paridad a con paridad, solo mover el
+  switch.
+- **Lado host.** `alu_client.py`/`alu_gui.py` ganan la misma capability
+  (flag `--parity` en el cliente, checkbox equivalente en la GUI; apagado
+  por defecto, coincide con el switch en bajo). Igual que con el baud
+  rate, no hay negociación automática: el operador tiene que saber en qué
+  posición está el switch de paridad y activar/desactivar lo mismo del
+  lado PC. Ver 5 para el detalle.
+- **Verificación.** Se agregaron 3 testbenches nuevos dedicados
+  (`tb_uart_rx_parity.v`, `tb_uart_tx_parity.v`,
+  `tb_uart_alu_top_parity.v`, ver 4.1) que instancian los módulos con
+  `parity_en_i=1` sostenido, sin tocar ninguno de los 6 testbenches
+  originales (que sí necesitaron un ajuste menor: conectar
+  `parity_en_i=1'b0` explícitamente donde antes no hacía falta, porque
+  pasó de parámetro con default a puerto obligatorio — un puerto sin
+  conectar queda en alta impedancia, no en `0`, y eso rompía la FSM).
+  `tb_uart_rx_parity.v` prueba tramas con paridad EVEN correcta (tienen
+  que aceptarse sin error) y tramas con el bit de paridad corrompido a
+  propósito (tienen que detectarse sin perder el byte).
+  `tb_uart_alu_top_parity.v` termina cambiando `parity_en_i`
+  en caliente entre dos operaciones (mismo patrón que el cambio de baud
+  rate en caliente de `tb_uart_alu_top.v`), confirmando que el sistema
+  sigue funcionando de punta a punta de los dos lados del cambio.
+
 ## 4. Verificación
 
 ### 4.1 Simulación (Icarus Verilog)
 
-Cada módulo tiene su propio testbench, más uno de integración end-to-end.
-Los testbenches de módulo individual (`tb_uart_rx`, `tb_uart_tx`,
-`tb_uart_interface`, `tb_alu_link`) usan valores de clock/tick pequeños
-para simular rápido; el end-to-end (`tb_uart_alu_top`) sí reproduce
-timing de UART real (start + 8 datos + stop, a razón de `CLK_FREQ/BAUD`
-ciclos por bit), incluyendo cambio de baud rate en caliente entre
-operaciones. Todos se ejecutaron con Icarus Verilog 12.0
-(`iverilog`/`vvp`), sin errores ni warnings de diseño:
+Cada módulo tiene su propio testbench, más uno de integración end-to-end,
+más 3 testbenches dedicados a la capability de paridad opcional (ver
+3.5), que instancian los módulos con `parity_en_i=1` sostenido, sin
+modificar la lógica de ninguno de los 6 testbenches originales (esos
+siguen corriendo, sin tocar, con `parity_en_i=1'b0` conectado
+explícitamente — antes no hacía falta, pero al pasar `PARITY_EN` de
+parámetro a puerto obligatorio, un puerto sin conectar queda flotando,
+no en `0`). Los testbenches de módulo individual (`tb_uart_rx`,
+`tb_uart_tx`, `tb_uart_interface`, `tb_alu_link`, y los 3 de paridad)
+usan valores de clock/tick pequeños para simular rápido; los dos
+end-to-end (`tb_uart_alu_top`, `tb_uart_alu_top_parity`) sí reproducen
+timing de UART real (start + datos(+paridad) + stop, a razón de
+`CLK_FREQ/BAUD` ciclos por bit). El cambio de baud rate en caliente se
+prueba en `tb_uart_alu_top.v` (con `parity_en_i=0`) y el de `parity_en_i`
+en caliente en `tb_uart_alu_top_parity.v` (con baud rate fijo) — cada uno
+por separado; la combinación de los dos cambios a la vez no se probó.
+Todos se ejecutaron
+con Icarus Verilog 12.0 (`iverilog`/`vvp`), sin errores ni warnings de
+diseño. `tb_alu_link.v`, `tb_uart_alu_top.v` y `tb_uart_alu_top_parity.v`
+necesitan la flag `-g2012` (parseo SystemVerilog) para compilar: declaran
+variables locales dentro de un `begin...end` sin nombre, algo que
+Verilog-2005 puro no permite (los demás testbenches, incluidos los otros
+2 de paridad, no la necesitan):
 
 | Testbench | Resultado |
 |---|---|
@@ -424,6 +536,9 @@ operaciones. Todos se ejecutaron con Icarus Verilog 12.0
 | `tb_uart_interface.v` | 17/17 verificaciones OK |
 | `tb_alu_link.v` | 30/30 operaciones correctas (protocolo completo, alta velocidad) |
 | `tb_uart_alu_top.v` | 21/21 operaciones correctas (end-to-end, timing UART real) |
+| `tb_uart_rx_parity.v` | 34/34 verificaciones OK (`parity_en_i=1`: paridad EVEN correcta aceptada sin error + paridad corrompida inyectada, detectada sin perder el byte) |
+| `tb_uart_tx_parity.v` | 17/17 bytes OK (`parity_en_i=1`, loopback contra `uart_rx` con paridad activa) |
+| `tb_uart_alu_top_parity.v` | 8/8 operaciones correctas (end-to-end con `parity_en_i=1`, incluye cambio de `parity_en_i` en caliente) |
 
 ### 4.2 Síntesis e implementación (Vivado)
 
@@ -431,13 +546,29 @@ El proyecto (`tp2/synt/tp2_uart/`) se sintetizó e implementó en Vivado
 para una Basys 3 (Xilinx Artix-7, `xc7a35tcpg236-1`), con
 `constraints/uart_alu_top.xdc` mapeando clock, reset, `rx_i`/`tx_o` (al
 puente USB-serial FTDI integrado de la placa) y `baud_sel_i[1:0]` (a
-SW1/SW0). `write_bitstream` completó sin errores (0 errores de DRC, 3
-warnings no bloqueantes: uno genérico de propiedades de bitstream
-—`CFGBVS-1`— y dos `PDRC-153`, uno por cada bit del registro de 2 bits
-`baud_sel_reg` en `baud_generator.v`, que señalan que Vivado lo
-implementó con clock gateado en vez de usar el pin de enable; no afecta
-el funcionamiento observado, queda como posible mejora de estilo de
-síntesis).
+SW1/SW0). Se corrió dos veces:
+
+- **Primera síntesis (31/07)**, diseño base sin paridad: `write_bitstream`
+  completó sin errores de DRC (3 warnings no bloqueantes: `CFGBVS-1` y
+  dos `PDRC-153`, gated clock sobre lógica interna de
+  `baud_generator.v`). Es la síntesis que se probó en hardware real (ver
+  4.3).
+- **Segunda síntesis (04/09)**, ya con la capability de paridad (3.5) y
+  el pin de `parity_en_i` corregido (estaba mal mapeado a `W17` —que en
+  el master XDC oficial de Digilent es SW3, no SW2— corregido a `W16`,
+  el pin real de SW2; `parity_err_o`/LD0 ya estaba bien). `CFGBVS-1`
+  quedó resuelto (0 apariciones en el reporte de DRC), timing sin
+  cambios (todos los constraints cumplidos). `PDRC-153` se mantiene
+  igual que en la primera síntesis; como ya se había probado que no
+  afecta el funcionamiento en hardware real, se documenta así y no se
+  persigue más.
+
+Al ser `parity_en_i` una entrada en tiempo real y no un parámetro, esta
+segunda síntesis sirve para probar tanto sin paridad como con paridad
+(switch en alto, siempre EVEN), sin resintetizar. Esa configuración está
+verificada en simulación (ver 4.1) pero **todavía no** en esta placa
+física; el procedimiento para probarlo está en el README, sección
+"Paridad opcional en runtime".
 
 ### 4.3 Validación en hardware real (Basys 3)
 
@@ -465,25 +596,46 @@ el mismo resultado, confirmado en hardware real y no solo en simulación.
 Para operar el sistema desde una PC se construyeron dos clientes en
 Python (`tp2/host/`), ambos sobre el mismo módulo de protocolo
 (`alu_client.py` expone el armado/parseo de paquetes; nada se duplica
-entre uno y otro):
+entre uno y otro). La apertura del puerto serie en sí **no** está
+unificada de la misma forma: cada script llama a `serial.Serial(...)` por
+su cuenta (`alu_gui.py` no importa una función de conexión compartida),
+así que agregar `--parity` significó tocar los dos `serial.Serial(...)`
+por separado, apoyados en un único mapeo `PARITY_TO_PYSERIAL` definido en
+`alu_client.py` e importado por la GUI (mismo patrón que ya usaban con
+`BAUD_TO_SEL`, para no repetir la tabla de valores dos veces):
 
 - **`alu_client.py`** — cliente de línea de comandos (`pyserial`): arma un
   `CMD_LOAD` con la operación pedida, dispara uno o más `CMD_READ`
-  (`--reread N` para releer sin recargar) y parsea la respuesta.
+  (`--reread N` para releer sin recargar) y parsea la respuesta. La flag
+  `--parity` (apagada por defecto) activa el bit de paridad EVEN real
+  del puerto — el framing físico que arma/verifica en hardware el
+  puente FTDI de la placa, no algo que calcule este script (ver 2.4).
+  Tiene que coincidir con la posición de `parity_en_i` (switch); igual
+  que con `--baud`, el operador tiene que mirar el switch físico y
+  activar/desactivar lo mismo acá, no hay negociación automática.
   ```bash
   python alu_client.py --port COM4 --baud 19200 ADD 100 50
+  python alu_client.py --port COM4 --baud 19200 --parity ADD 100 50
   ```
 - **`alu_gui.py`** — GUI de escritorio (tkinter, misma dependencia
   `pyserial`, sin librerías adicionales) pensada para la defensa: permite
-  elegir puerto/baud rate, armar y enviar un `CMD_LOAD` desde combos,
-  pedir `CMD_READ` (o releerlo N veces con un botón dedicado) y ver el
-  resultado con indicadores de `co`/`zero`, con un log que muestra byte a
-  byte lo que se envía y se recibe. La comunicación serie corre en un
-  thread aparte del hilo de la interfaz para no congelarla mientras
+  elegir puerto/baud rate/paridad, armar y enviar un `CMD_LOAD` desde
+  combos, pedir `CMD_READ` (o releerlo N veces con un botón dedicado) y
+  ver el resultado con indicadores de `co`/`zero`, con un log que muestra
+  byte a byte lo que se envía y se recibe. La comunicación serie corre en
+  un thread aparte del hilo de la interfaz para no congelarla mientras
   espera respuesta.
   ```bash
   python alu_gui.py
   ```
+
+El soporte de `--parity` se verificó hasta donde se puede sin hardware
+real: `--help`, los 3 valores contra un puerto inexistente (falla con
+`SerialException` limpia, no con una excepción de Python sin manejar,
+confirmando que `parity=` llega bien a pyserial) y el rechazo de un valor
+inválido por `argparse`. **No** se probó contra un FTDI real ni con el
+switch `parity_en_i` de una Basys 3 real en alto — no hay una placa
+conectada en el entorno donde se hizo este cambio.
 
 _(agregar acá una captura de pantalla de `alu_gui.py` en uso)_
 
@@ -491,8 +643,9 @@ _(agregar acá una captura de pantalla de `alu_gui.py` en uso)_
 
 El sistema cumple el objetivo del enunciado: la ALU del TP1 se opera de
 punta a punta a través de una UART diseñada íntegramente como máquinas de
-estado finitas síncronas, verificada tanto en simulación (120 casos entre
-los 6 testbenches, sin fallos) como en una Basys 3 real.
+estado finitas síncronas, verificada tanto en simulación (184 casos entre
+los 9 testbenches, sin fallos) como en una Basys 3 real (esta última, con
+el switch `parity_en_i` por defecto en bajo; ver 4.2).
 
 Las decisiones de diseño de FSM tomadas de forma consciente —salidas
 Moore registradas en Rx/Tx para composición limpia entre módulos del
@@ -509,3 +662,15 @@ Circuit* genérico separa "cargar operandos" de "leer resultado" como dos
 acciones explícitas, lo que valida en hardware real un caso que un
 protocolo posicional fijo no podría ofrecer: releer el mismo resultado
 varias veces sin recargar.
+
+La capability de paridad (3.5) agregada sobre el diseño original sigue el
+mismo criterio: es una opción explícita, seleccionable en tiempo real
+igual que el baud rate (`parity_en_i` como switch, siempre EVEN), en bajo
+por defecto para no perturbar un sistema ya
+verificado de punta a punta, con su propia batería de tests dedicados en
+vez de mezclarse con la ya existente. Que se pueda agregar así —sin tocar
+ni un bit del comportamiento por defecto— es en parte una consecuencia de
+las decisiones de 3.1-3.3: Moore con salidas registradas y FSM segura dan
+un límite de módulo claro y predecible sobre el que extender, en vez de
+lógica implícita que hubiera obligado a revisar todo el diseño para
+agregar un solo bit opcional a la trama.
