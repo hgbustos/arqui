@@ -4,7 +4,7 @@
 // Descripción:
 // "Interface Circuit" del diagrama del enunciado: adapta el Rx/Tx (que
 // trabajan a nivel de bit/trama) a una interfaz de 1 palabra por sentido,
-// tipo FIFO, para que un controlador aguas abajo pueda leer y escribir
+// tipo FIFO, para que un controlador aguas arriba pueda leer y escribir
 // bytes sin conocer nada de UART:
 //
 //   Lado Rx: rx_dout_i / rx_done_tick_i (de uart_rx)  -> r_data_o / rx_empty_o,

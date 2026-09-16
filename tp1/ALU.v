@@ -42,7 +42,7 @@ module ALU #(
     localparam OP_SRA = 6'b000011;
     localparam OP_SRL = 6'b000010;
     localparam OP_NOR = 6'b100111;
-    // --- Opcodes nuevos (TP3, RV32I) ---
+    // --- Opcodes (TP3, RV32I) ---
     localparam OP_SLL  = 6'b000001; // no usa 000000: ver nota arriba (reservado por tb_alu.v)
     localparam OP_SLT  = 6'b101010;
     localparam OP_SLTU = 6'b101011;

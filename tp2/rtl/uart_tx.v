@@ -14,26 +14,10 @@
 //             calculado sobre 'din_i' al momento de cargarlo.
 //   stop   -> saca el/los bit/s de stop ('1') durante SB_TICKS ticks y
 //             levanta 'tx_done_tick_o' por un ciclo antes de volver a idle.
-//
-// La salida 'tx_o' es de tipo Moore: depende únicamente del estado (y del
-// bit menos significativo del shift register / del bit de paridad ya
-// calculado, que también son parte del estado registrado), nunca
-// combinacionalmente de 'din_i' o 'tx_start_i'.
-//
-// Paridad (opcional, 'parity_en_i' en bajo por defecto): ver la nota
-// completa en uart_rx.v -- acá simétrico (entrada en tiempo real, pensada
-// para switch fisico, latcheada una vez por trama), solo que el bit se
-// calcula una vez al cargar el byte (estado IDLE) y no al final: para
-// cuando la FSM necesita sacarlo por 'tx_o' (estado PARITY), 'shift_reg'
-// ya se corrió DBIT veces y no conserva el byte original, así que no se
-// puede recalcular ahí. 'parity_en_i' se latchea en el mismo instante
-// (misma rama IDLE, ver más abajo): el momento en que se acepta un byte
-// nuevo a transmitir es el mismo momento en que esta trama queda
-// "decidida" en todo sentido.
 // =============================================================================
 module uart_tx #(
     parameter DBIT       = 8, // cantidad de bits de datos por trama
-    parameter SB_TICKS   = 16 // ticks (s_tick_i) que dura el/los bit/s de stop
+    parameter SB_TICKS   = 16 // ticks (s_tick_i) que duran los bits de stop
 )(
     input  wire            clk_i,
     input  wire            rst_i,
@@ -51,8 +35,7 @@ module uart_tx #(
     localparam integer TICK_CNT_WIDTH = $clog2(TICK_CNT_MAX);
 
     // --- Estados ---
-    // Mismo criterio que uart_rx.v: 3 bits para 5 estados, PARITY se
-    // agrega siempre en el RTL aunque con parity_en_i en bajo nunca se alcanza.
+    // 3 bits para 5 estados
     localparam [2:0] IDLE   = 3'd0,
                       START  = 3'd1,
                       DATA   = 3'd2,
@@ -68,12 +51,7 @@ module uart_tx #(
     reg                        parity_bit_reg, parity_bit_next; // bit de paridad ya calculado (ver IDLE)
     reg                        parity_en_reg, parity_en_next;   // copia de 'parity_en_i' latcheada al aceptar el byte
 
-    // Registro de estado (memoria). 'tx_done_tick_o' se registra aca (no es
-    // una salida puramente combinacional) por la misma razón que dout_o en
-    // uart_rx: un consumidor externo (mismo clk, otro módulo) que lo
-    // muestree en el propio bloque clocked donde se genera la condición no
-    // tiene garantizado ver la versión combinacional resuelta en ese mismo
-    // flanco.
+    // --- Registro de estado ---
     always @(posedge clk_i, posedge rst_i) begin
         if (rst_i) begin
             state_reg      <= IDLE;
@@ -113,13 +91,12 @@ module uart_tx #(
                 tx_next = 1'b1;
                 if (tx_start_i) begin
                     state_next      = START;
-                    tick_cnt_next   = {TICK_CNT_WIDTH{1'b0}};
+                    tick_cnt_next   = {TICK_CNT_WIDTH{1'b0}}; // contador de ticks a 0
                     shift_next      = din_i;
-                    // Se calcula ya, con el byte completo todavia intacto
-                    // (shift_reg recien va a empezar a correrse en DATA).
-                    parity_bit_next = ^din_i; // paridad EVEN, unica opcion soportada
-                    // Se latchea junto con lo anterior: esta trama usa el
-                    // valor de 'parity_en_i' de ESTE instante, sin
+
+                    // Se calcula ya la paridad, independientemente de si se va a usar o no.
+                    parity_bit_next = ^din_i; // paridad EVEN
+                    // Se latchea en ESTE instante, sin
                     // importar si el switch cambia despues.
                     parity_en_next  = parity_en_i;
                 end
@@ -143,8 +120,9 @@ module uart_tx #(
                 tx_next = shift_reg[0]; // LSB primero
                 if (s_tick_i) begin
                     if (tick_cnt_reg == 4'd15) begin
-                        tick_cnt_next = {TICK_CNT_WIDTH{1'b0}};
+                        tick_cnt_next = {TICK_CNT_WIDTH{1'b0}}; // contador a cero
                         shift_next    = shift_reg >> 1;
+                        // Si era el ultimo bit de datos, vamos a STOP O PARITY
                         if (bit_idx_reg == DBIT - 1) begin
                             state_next = parity_en_reg ? PARITY : STOP;
                         end
@@ -158,8 +136,6 @@ module uart_tx #(
                 end
             end
 
-            // Solo se alcanza si parity_en_reg=1 (ver DATA). 'parity_bit_reg'
-            // ya se calculo al cargar el byte (ver IDLE).
             PARITY: begin
                 tx_next = parity_bit_reg;
                 if (s_tick_i) begin
