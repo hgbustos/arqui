@@ -1,6 +1,12 @@
 # TP2 — Máquinas de Estado Finitas: UART
 
 Fuente: `5 - Maquinas de Estado Finitas - 2019.pdf` (cátedra Arquitectura de Computadoras).
+## Integrantes del grupo
+
+| Alumno | Matrícula |
+|---|---|
+| Bustos, Hugo Gabriel | 39823551 |
+| Vásquez, Francisco Javier | 43812221 |
 
 ## Objetivo
 
