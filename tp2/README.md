@@ -380,38 +380,6 @@ el árbol de jerarquía de GTKWave — el DUT se llama `dut`):
 | `dut.u_interface.rx_empty_o`, `dut.u_interface.tx_full_o`, `dut.u_alu_link.rd_o`, `dut.u_alu_link.wr_o` | El handshake entre `alu_link` y el Interface Circuit. |
 | `dut.u_uart_rx.parity_err_o` (solo en `tb_uart_alu_top_parity.vcd`) | Se mantiene en 0 en todo este testbench (no inyecta ruido). Para *ver* un `1` de verdad, correr `tb_uart_rx_parity.v` en vez de este — ese sí corrompe paridad a propósito. |
 
-## Estado de avance
-
-- [x] Baud Rate Generator (`baud_generator.v`), con 4 presets seleccionables en runtime
-- [x] Rx (`uart_rx.v`)
-- [x] Tx (`uart_tx.v`)
-- [x] Interface Circuit + protocolo de comandos (`uart_interface.v`, `alu_link.v`)
-- [x] Top de integración con la `ALU` de TP1 (`uart_alu_top.v`)
-- [x] Testbench end-to-end sobre el sistema completo (`tb_uart_alu_top.v`)
-- [x] Cliente de host en Python (`tp2/host/alu_client.py`)
-- [x] Sintetizado, implementado y probado en una Basys 3 real (`tp2/synt/`)
-- [x] GUI de escritorio para la defensa (`tp2/host/alu_gui.py`)
-- [x] Paridad opcional en runtime (`parity_en_i`, siempre EVEN), switch en bajo por defecto — ver "Paridad opcional" más arriba
-
-TP2 completo. Todos los módulos tienen su testbench verificado con Icarus
-Verilog (`iverilog`/`vvp`), no solo revisados a ojo: `tb_baud_generator.v`
-(25/25 ticks, 4 presets + cambio en caliente), `tb_uart_rx.v` (16/16),
-`tb_uart_tx.v` (16/16), `tb_uart_interface.v` (17/17), `tb_alu_link.v`
-(30/30, protocolo CMD_LOAD/CMD_READ a alta velocidad simulando pulsos) y
-`tb_uart_alu_top.v` (21/21, end-to-end con timing de UART real de punta a
-punta, incluyendo cambio de baud rate en caliente entre operaciones). Las
-9 simulaciones (las 6 originales + las 3 de paridad, ver abajo) se
-verificaron con Icarus Verilog 12.0, sin errores.
-
-Testbenches de paridad (`parity_en_i=1`, sin modificar ninguno de los 6
-anteriores): `tb_uart_rx_parity.v` (34/34, paridad EVEN correcta aceptada
-sin error y paridad corrompida inyectada a propósito, detectada sin
-perder el byte), `tb_uart_tx_parity.v` (17/17, loopback contra `uart_rx`
-con paridad activa) y `tb_uart_alu_top_parity.v` (8/8, end-to-end, incluye cambio de
-`parity_en_i` en caliente entre dos operaciones). `tb_alu_link.v`,
-`tb_uart_alu_top.v` y `tb_uart_alu_top_parity.v` necesitan compilarse con
-`iverilog -g2012` (declaran variables locales dentro de un bloque sin
-nombre); el resto compila con las opciones por defecto.
 
 ## Lecciones de diseño (de los bugs que aparecieron al integrar)
 
@@ -452,19 +420,3 @@ Un tercer bug, más sutil, fue del *testbench* y no del diseño: `wait(señal
 cola del pulso del primer byte en vez de esperar genuinamente al segundo.
 Se resolvió esperando explícitamente a que la señal vuelva a bajar antes de
 dar por terminada cada lectura.
-
-## Entregable esperado
-
-- Módulo **Baud Rate Generator** (contador módulo `N` configurable según
-  clock/baud rate deseados).
-- Módulo **Rx** (FSM receptora) con salidas `dout` y `rx_done_tick`.
-- Módulo **Tx** (FSM transmisora) con entradas `tx_start`/`din` y salidas
-  `tx`, `tx_done`.
-- Módulo **Interface Circuit** que exponga a la ALU la interfaz
-  `r_data`/`rd`/`rx_empty` (lectura) y `w_data`/`wr`/`tx_full` (escritura).
-- Módulo **top** que instancie Baud Rate Generator + Rx + Tx + Interface
-  Circuit + la `ALU` del TP1, análogo a `tp1/ALU_top.v` pero con la UART en
-  lugar de switches/botones/leds como entrada/salida.
-- Testbench(es) que verifiquen Rx, Tx y la integración end-to-end (enviar
-  opcode + operandos por "rx" simulado, verificar que "tx" devuelva el
-  resultado esperado).
