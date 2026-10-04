@@ -24,6 +24,7 @@ Bustos Hugo Gabriel - -
    6. [Memorias de lectura asíncrona, no Block RAM](#36-memorias-de-lectura-asíncrona-no-block-ram)
    7. [Volcado completo, no diferencial](#37-volcado-completo-no-diferencial)
    8. [El clock: sin gating, frecuencia pendiente de la Fase 4](#38-el-clock-sin-gating-frecuencia-pendiente-de-la-fase-4)
+   9. [Paso a paso: congelamiento total del núcleo](#39-paso-a-paso-congelamiento-total-del-núcleo)
 4. [Verificación](#4-verificación)
 5. [Herramientas de host](#5-herramientas-de-host)
 6. [Estado del proyecto y próximos pasos](#6-estado-del-proyecto-y-próximos-pasos)
@@ -178,7 +179,9 @@ Casos particulares de riesgo de datos que necesitan detener el pipeline
 
 Ningún stall/flush/burbuja de este proyecto gatea el clock en ningún
 punto: todos son enables síncronos sobre PC, IF/ID e ID/EX, tal como pide
-el enunciado explícitamente.
+el enunciado explícitamente. El congelamiento que usa la Debug Unit para
+el modo paso a paso es un mecanismo distinto, que abarca el núcleo
+entero (§3.9).
 
 ### 2.4 Debug Unit y protocolo UART
 
@@ -369,7 +372,7 @@ Sin este bypass, ninguna de las tres fuentes disponibles (adelantamiento
 desde EX/MEM, desde MEM/WB, o lectura directa del banco) cubre ese caso
 puntual — se manifestó como un resultado incorrecto en el primer intento
 de `tb_riscv_core.v` con un programa de instrucciones R-type consecutivas,
-y quedó cubierto por los 461 tests de Verilog que corren hoy.
+y quedó cubierto por los tests de Verilog que corren hoy (§4).
 
 ### 3.6 Memorias de lectura asíncrona, no Block RAM
 
@@ -445,9 +448,10 @@ que el default del núcleo (ambos son parámetros independientes,
 
 Ningún stall, freeze o burbuja de este diseño gatea el clock: todo el
 control de flujo se resuelve con **enables síncronos** sobre los
-registros correspondientes (PC, IF/ID, ID/EX) y con resets síncronos
-controlados por la propia lógica de la Debug Unit, tal como exige el
-enunciado explícitamente.
+registros correspondientes (PC, IF/ID, ID/EX para los hazards; todos los
+elementos con estado del núcleo para el congelamiento de la Debug Unit,
+§3.9) y con resets controlados por la propia lógica de la Debug Unit, tal
+como exige el enunciado explícitamente.
 
 **Camino crítico**, medido en la primera síntesis + implementación real
 (Fase 4): a 100MHz (10ns) el diseño no cierra timing — Worst Negative
@@ -494,6 +498,80 @@ final una vez vuelto a sintetizar con el clock derivado.
 
 Referencia teórica: Patterson, Apéndice A.11 (p.A-71).
 
+### 3.9 Paso a paso: congelamiento total del núcleo
+
+La consigna define el modo paso a paso como *"enviando un comando por la
+uart se ejecuta un ciclo de clock"*, mostrando a cada paso el estado. La
+implementación: `CMD_STEP` baja `global_stall_i` durante exactamente un
+ciclo, y el resto del tiempo (esperando comandos, o mientras se transmite
+el volcado, unos 10^7 ciclos) la Debug Unit lo sostiene en alto. Para que
+eso sea de verdad "un ciclo de clock", hace falta una invariante estricta:
+**un ciclo congelado no modifica ningún estado del núcleo**.
+
+**Un error encontrado en la revisión.** La primera versión aplicaba
+`global_stall_i` sólo al PC y a IF/ID, las mismas dos señales que usa un
+stall por hazard. ID/EX, EX/MEM y MEM/WB seguían avanzando, así que la
+instrucción retenida en IF/ID se volvía a emitir hacia EX **en cada ciclo
+congelado**. Con un programa como:
+
+```
+addi x1, x0, 5
+addi x1, x1, 1     ← retenida en IF/ID tras el 2º CMD_STEP
+halt
+```
+
+el volcado mostraría `x1` en cientos de miles en vez de 6 (se
+incrementa una vez por ciclo congelado hasta que el volcado llega a los
+registros), y la misma instrucción copiada en todas las etapas. El modo continuo no se veía
+afectado (el núcleo sólo se congela una vez que el HALT llegó a WB, y
+re-emitir un HALT es inofensivo), y por eso la suite pasaba completa:
+ningún test hacía `CMD_STEP` sobre un programa que todavía estuviera
+corriendo.
+
+**Por qué no alcanza con reusar el stall de hazard.** Son dos cosas
+distintas. Un stall por load-use (Patterson 4.7) frena sólo la parte
+delantera del pipeline e inserta una burbuja: la parte trasera *tiene*
+que seguir avanzando, porque es justamente el load que avanza lo que
+resuelve el hazard. El congelamiento de debug, en cambio, es detener el
+tiempo para el procesador entero.
+
+**La solución.** `riscv_core.v` deriva un único enable global, `core_en =
+~global_stall_i`, que habilita **todos** los elementos con estado del
+núcleo: el PC, los 4 latches de pipeline, la escritura al banco de
+registros, la escritura a `dmem` y el contador de ciclos. Dos detalles:
+
+- **El congelamiento domina a las decisiones internas.** Con `core_en=0`
+  no hay burbuja ni flush que valga: en `id_ex_reg.v`, si la burbuja le
+  ganara, pisaría con un NOP una instrucción que todavía no pasó a EX/MEM
+  (también congelado) y la haría desaparecer del programa.
+- **Las escrituras al banco y a `dmem` también se condicionan**, aunque
+  un MEM/WB congelado reescribiría el mismo valor y el resultado final no
+  cambiaría. El motivo es que el estado visible tiene que ser el del
+  ciclo exacto en que se detuvo el núcleo: sin esto, el volcado mostraría
+  el registro ya escrito mientras la instrucción todavía figura en MEM/WB,
+  y no coincidiría con lo que hace el pipeline real en ese ciclo.
+
+Esto no es *clock gating*: el clock sigue llegando a todos los
+flip-flops, lo que se desactiva es su enable (en la Artix-7, el pin CE de
+cada flip-flop), tal como exige el enunciado.
+
+Dos datos del volcado cambian de significado con esto, y quedan mejor
+definidos: `CYCLE_COUNT` pasa a contar ciclos **ejecutados** (tras `N`
+pasos vale `N`, en vez de incluir el tiempo entre comandos), y el bit
+`stalled` del STATUS refleja sólo los stalls propios del pipeline (antes
+valía 1 en todo volcado, porque el núcleo siempre está congelado mientras
+se transmite). Ver `tp3/docs/debug_protocol.md`.
+
+**Verificación.** `tb_riscv_core.v` (sección 10) corre un programa que
+junta los casos sensibles (una instrucción no idempotente, un store, un
+load-use, saltos tomados, `jal` y un load justo antes de un branch). Lo
+corre primero libre, grabando el estado completo en cada ciclo (todo lo
+que mandaría un volcado), y después paso a paso, con congelamientos de 1
+a 200 ciclos entre pasos. Verifica que durante cada congelamiento no
+cambie nada y que, tras el paso `k`, el estado sea idéntico bit a bit al
+de la corrida libre en el ciclo `k`. `tb_pipeline_regs.v` verifica el
+congelamiento de cada latch y su prioridad sobre la burbuja.
+
 ## 4. Verificación
 
 Cada módulo de Verilog tiene su propio testbench (Icarus Verilog,
@@ -512,25 +590,28 @@ integración; cada módulo de Python tiene su propia suite de tests
 | `tb_branch_unit.v` | 7/7 |
 | `tb_forwarding_unit.v` | 10/10 |
 | `tb_hazard_unit.v` | 10/10 |
-| `tb_pipeline_regs.v` | 30/30 |
+| `tb_pipeline_regs.v` | 41/41 |
 | `tb_imem.v` | 5/5 |
 | `tb_dmem.v` | 20/20 |
-| `tb_riscv_core.v` (integración del datapath completo) | 56/56 |
+| `tb_riscv_core.v` (integración del datapath completo, incluido el paso a paso) | 142/142 |
 | `tb_debug_unit.v` | 29/29 |
 | `tb_dump_unit.v` | 58/58 |
 | `tb_riscv_uart_top.v` (integración de punta a punta, UART real bit a bit) | 9/9 |
-| **Subtotal Verilog** | **461/461** |
+| **Subtotal Verilog** (Icarus Verilog 12, corrida del 2026-10-04) | **558/558** |
 | `test_riscv_asm.py` | 41/41 |
 | `test_riscv_protocol.py` | 19/19 |
 | `test_riscv_client.py` (con un puerto serie simulado) | 1/1 |
-| **Subtotal Python** | **61/61** |
-| **Total** | **522/522** |
+| **Subtotal Python** (última corrida registrada: 2026-08-18) | **61/61** |
+| **Total** | **619/619** |
 
 `tb_riscv_core.v` corre programas RV32I reales (armados con los mismos
 encoders que usa `host/riscv_asm.py`, ver `tp3/tb/riscv_isa_encode.vh`)
 que ejercitan cada tipo de instrucción, la prioridad de adelantamiento
 EX/MEM sobre MEM/WB, ambos hazards de stall, y HALT explícito e
-implícito. `tb_riscv_uart_top.v` va un paso más allá: en vez de manejar
+implícito. Su sección 10 verifica el modo paso a paso ciclo a ciclo
+contra una corrida libre (§3.9); se comprobó además que, sobre el RTL
+anterior al arreglo, esa sección falla (84 fallos: `x1` termina en 22 en
+vez de 3). `tb_riscv_uart_top.v` va un paso más allá: en vez de manejar
 la interfaz Rx/Tx a nivel de registro, banguea la línea `rx_i` bit a bit
 como lo haría una PC real y decodifica `tx_o` de la misma forma,
 atravesando la cadena completa (UART de TP2 + Debug Unit + Dump Unit +
@@ -555,6 +636,23 @@ son el tipo de detalle que vale la pena que quede a la vista:
   comando — canal full-duplex real. Enviar y recibir tienen que correr
   **en paralelo** (`fork`/`join`), no en secuencia, o el receptor arranca
   tarde y pierde el bit de inicio de la trama.
+
+En la revisión previa a la defensa, al volver a correr toda la suite
+desde cero, aparecieron dos problemas que la tabla anterior no
+reflejaba. Ninguno es de la lógica del procesador:
+
+- `tp2/rtl/uart_rx.v` no compilaba: un commit que sólo pretendía
+  limpiar comentarios borró por error la etiqueta `PARITY:` del `case`
+  de la FSM. Rompía `tb_riscv_uart_top.v` y todos los testbenches de
+  TP2 que usan el receptor. Se restauró la línea; la suite de TP2 vuelve
+  a pasar completa.
+- La extensión de paridad de TP2 agregó un puerto `parity_en_i` a
+  `uart_rx.v`/`uart_tx.v`, y `riscv_uart_top.v` no lo conectaba. En
+  simulación ese pin flotante vale `x` y el receptor nunca completa un
+  byte (`tb_riscv_uart_top.v` terminaba por timeout). En síntesis, Vivado
+  ata a 0 los pines sin conectar, así que en la placa probablemente
+  funcionaba igual, pero no hay que depender de eso. Se conectó
+  explícitamente a 0 (el protocolo de la Debug Unit es 8N1).
 
 ## 5. Herramientas de host
 
@@ -592,8 +690,8 @@ TP2):
 
 ## 6. Estado del proyecto y próximos pasos
 
-- [x] **Fase 1** — Datapath completo (`rtl/core/`), 201 tests.
-- [x] **Fase 2** — Debug Unit + Dump Unit + top UART (`rtl/debug/`), 260 tests.
+- [x] **Fase 1** — Datapath completo (`rtl/core/`), 300 tests.
+- [x] **Fase 2** — Debug Unit + Dump Unit + top UART (`rtl/debug/`), 96 tests (+162 de regresión de la ALU de TP1).
 - [x] **Fase 3** — Herramientas de host (`host/`), 61 tests.
 - [ ] **Fase 4** — Proyecto Vivado, síntesis, timing closure (§3.8 queda
       pendiente hasta esta fase).
@@ -622,7 +720,7 @@ comando+trigger que ya había probado su robustez en TP2, y las
 herramientas de host (ensamblador, CLI y GUI) extienden directamente lo
 que ese mismo TP2 ya había construido en vez de empezar de cero.
 
-Las 522 verificaciones automáticas (461 en Verilog, 61 en Python) cubren
+Las 619 verificaciones automáticas (558 en Verilog, 61 en Python) cubren
 cada instrucción del set pedido, cada camino de adelantamiento, ambos
 hazards de stall, HALT explícito e implícito, el protocolo completo de
 la Debug Unit incluyendo el bit-banging real de UART, y el camino de

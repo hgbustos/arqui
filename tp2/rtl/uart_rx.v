@@ -149,6 +149,7 @@ module uart_rx #(
             end
 
             // Solo se alcanza si parity_en_reg=1
+            PARITY: begin
                 if (s_tick_i) begin
                     if (tick_cnt_reg == 4'd15) begin
                         tick_cnt_next   = {TICK_CNT_WIDTH{1'b0}};

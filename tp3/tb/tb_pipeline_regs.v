@@ -5,12 +5,14 @@
 // Descripción:
 // Verifica los 4 latches de pipeline en un solo testbench (son simples y
 // comparten patrón): if_id_reg (freeze vs. flush-a-NOP), id_ex_reg (bubble
-// fuerza TODOS los campos, incluidas las señales de control, a inerte),
-// y ex_mem_reg/mem_wb_reg (passthrough síncrono liso, sin stall/flush,
-// más reset). El valor de NOP esperado (0x00000013 = addi x0,x0,0) se
-// verifica explícitamente porque es la pieza clave que evita que un
-// flush/burbuja dispare un halt implícito por accidente (ver comentarios
-// en if_id_reg.v / id_ex_reg.v).
+// fuerza TODOS los campos, incluidas las señales de control, a inerte; el
+// freeze global le gana a la burbuja), y ex_mem_reg/mem_wb_reg
+// (passthrough síncrono, sin stall/flush propios, más reset y freeze
+// global). El freeze ('write_en_i'=0) es lo que usa el modo paso a paso de
+// la Debug Unit en los 4 latches a la vez. El valor de NOP esperado
+// (0x00000013 = addi x0,x0,0) se verifica explícitamente porque es la
+// pieza clave que evita que un flush/burbuja dispare un halt implícito por
+// accidente (ver comentarios en if_id_reg.v / id_ex_reg.v).
 // =============================================================================
 module tb_pipeline_regs;
 
@@ -70,7 +72,7 @@ module tb_pipeline_regs;
     // ------------------------------------------------------------------
     // id_ex_reg
     // ------------------------------------------------------------------
-    reg  idex_bubble;
+    reg  idex_we, idex_bubble;
     reg  [31:0] idex_pc_i, idex_rs1_i, idex_rs2_i, idex_imm_i, idex_instr_i;
     reg  idex_rw_i, idex_asa_i, idex_asb_i, idex_mr_i, idex_mw_i, idex_m2r_i, idex_jal_i, idex_jalr_i, idex_halt_i;
     reg  [1:0] idex_aluop_i;
@@ -79,7 +81,7 @@ module tb_pipeline_regs;
     wire [1:0] idex_aluop_o;
 
     id_ex_reg u_idex (
-        .clk_i(tb_clk), .rst_i(tb_rst), .bubble_i(idex_bubble),
+        .clk_i(tb_clk), .rst_i(tb_rst), .write_en_i(idex_we), .bubble_i(idex_bubble),
         .pc_i(idex_pc_i), .rs1_data_i(idex_rs1_i), .rs2_data_i(idex_rs2_i),
         .imm_i(idex_imm_i), .instr_i(idex_instr_i),
         .reg_write_i(idex_rw_i), .alu_src_a_i(idex_asa_i), .alu_src_b_i(idex_asb_i),
@@ -93,15 +95,16 @@ module tb_pipeline_regs;
     );
 
     // ------------------------------------------------------------------
-    // ex_mem_reg / mem_wb_reg (passthrough liso)
+    // ex_mem_reg / mem_wb_reg (passthrough liso + freeze global)
     // ------------------------------------------------------------------
+    reg  exmem_we, memwb_we;
     reg  [31:0] exmem_pc_i, exmem_res_i, exmem_rs2_i, exmem_instr_i;
     reg  exmem_rw_i, exmem_mr_i, exmem_mw_i, exmem_m2r_i, exmem_halt_i;
     wire [31:0] exmem_pc_o, exmem_res_o, exmem_rs2_o, exmem_instr_o;
     wire exmem_rw_o, exmem_mr_o, exmem_mw_o, exmem_m2r_o, exmem_halt_o;
 
     ex_mem_reg u_exmem (
-        .clk_i(tb_clk), .rst_i(tb_rst),
+        .clk_i(tb_clk), .rst_i(tb_rst), .write_en_i(exmem_we),
         .pc_i(exmem_pc_i), .ex_result_i(exmem_res_i), .rs2_data_i(exmem_rs2_i), .instr_i(exmem_instr_i),
         .reg_write_i(exmem_rw_i), .mem_read_i(exmem_mr_i), .mem_write_i(exmem_mw_i),
         .mem_to_reg_i(exmem_m2r_i), .is_halt_i(exmem_halt_i),
@@ -116,7 +119,7 @@ module tb_pipeline_regs;
     wire memwb_rw_o, memwb_m2r_o, memwb_halt_o;
 
     mem_wb_reg u_memwb (
-        .clk_i(tb_clk), .rst_i(tb_rst),
+        .clk_i(tb_clk), .rst_i(tb_rst), .write_en_i(memwb_we),
         .pc_i(memwb_pc_i), .result_i(memwb_res_i), .mem_read_data_i(memwb_mdata_i), .instr_i(memwb_instr_i),
         .reg_write_i(memwb_rw_i), .mem_to_reg_i(memwb_m2r_i), .is_halt_i(memwb_halt_i),
         .pc_o(memwb_pc_o), .result_o(memwb_res_o), .mem_read_data_o(memwb_mdata_o), .instr_o(memwb_instr_o),
@@ -131,6 +134,7 @@ module tb_pipeline_regs;
 
         tb_rst = 1;
         ifid_we = 1; ifid_flush = 0; ifid_pc_i = 0; ifid_instr_i = 0;
+        idex_we = 1; exmem_we = 1; memwb_we = 1;
         idex_bubble = 0; idex_pc_i=0; idex_rs1_i=0; idex_rs2_i=0; idex_imm_i=0; idex_instr_i=0;
         idex_rw_i=0; idex_asa_i=0; idex_asb_i=0; idex_aluop_i=0; idex_mr_i=0; idex_mw_i=0;
         idex_m2r_i=0; idex_jal_i=0; idex_jalr_i=0; idex_halt_i=0;
@@ -196,6 +200,26 @@ module tb_pipeline_regs;
         check32("id_ex pc tras bubble (0)", idex_pc_o, 32'h0);
         idex_bubble = 0;
 
+        $display("\n--- id_ex_reg: freeze global mantiene el valor ---");
+        idex_pc_i = 32'h5000; idex_instr_i = 32'hCAFEF00D;
+        idex_rw_i = 1; idex_mr_i = 0; idex_halt_i = 0; idex_jal_i = 0;
+        @(posedge tb_clk); #1; // carga normal de un valor conocido
+        idex_we = 0;
+        idex_pc_i = 32'h6666; idex_instr_i = 32'hFFFFFFFF; idex_rw_i = 0; // no deberian verse
+        @(posedge tb_clk); #1;
+        check32("id_ex pc tras freeze (sin cambio)", idex_pc_o, 32'h5000);
+        check32("id_ex instr tras freeze (sin cambio)", idex_instr_o, 32'hCAFEF00D);
+        check1 ("id_ex reg_write tras freeze (sin cambio)", idex_rw_o, 1'b1);
+
+        $display("\n--- id_ex_reg: el freeze le gana a la burbuja ---");
+        // Con el core congelado, la instruccion de este latch todavia no
+        // paso a EX/MEM: si la burbuja la pisara con un NOP, se perderia.
+        idex_bubble = 1;
+        @(posedge tb_clk); #1;
+        check32("id_ex instr con freeze+bubble (no se pisa con NOP)", idex_instr_o, 32'hCAFEF00D);
+        check1 ("id_ex reg_write con freeze+bubble (sin cambio)", idex_rw_o, 1'b1);
+        idex_bubble = 0; idex_we = 1;
+
         $display("\n--- ex_mem_reg / mem_wb_reg: passthrough liso ---");
         exmem_pc_i = 32'h3000; exmem_res_i = 32'hCAFE; exmem_rs2_i = 32'hBABE; exmem_instr_i = 32'h12345678;
         exmem_rw_i = 1; exmem_mw_i = 1; exmem_halt_i = 0;
@@ -208,6 +232,20 @@ module tb_pipeline_regs;
         check32("mem_wb result tras update", memwb_res_o, 32'hF00D);
         check32("mem_wb mem_read_data tras update", memwb_mdata_o, 32'hFEED);
         check1 ("mem_wb is_halt tras update", memwb_halt_o, 1'b1);
+
+        $display("\n--- ex_mem_reg / mem_wb_reg: freeze global mantiene el valor ---");
+        exmem_we = 0; memwb_we = 0;
+        exmem_res_i = 32'h1111; exmem_instr_i = 32'h22222222; exmem_mw_i = 0; // no deberian verse
+        memwb_res_i = 32'h3333; memwb_instr_i = 32'h44444444; memwb_halt_i = 0;
+        @(posedge tb_clk); #1;
+        check32("ex_mem ex_result tras freeze (sin cambio)", exmem_res_o, 32'hCAFE);
+        check1 ("ex_mem mem_write tras freeze (sin cambio)", exmem_mw_o, 1'b1);
+        check32("mem_wb result tras freeze (sin cambio)", memwb_res_o, 32'hF00D);
+        check1 ("mem_wb is_halt tras freeze (sin cambio)", memwb_halt_o, 1'b1);
+        exmem_we = 1; memwb_we = 1;
+        @(posedge tb_clk); #1;
+        check32("ex_mem ex_result al liberar el freeze", exmem_res_o, 32'h1111);
+        check32("mem_wb result al liberar el freeze", memwb_res_o, 32'h3333);
 
         $display("\n========================================");
         $display("Resultado: %0d EXITO / %0d FALLO", pass_count, fail_count);

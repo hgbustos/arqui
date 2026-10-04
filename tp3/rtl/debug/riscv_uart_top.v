@@ -74,6 +74,11 @@ module riscv_uart_top #(
     );
 
     // --- Receptor UART ---
+    // El protocolo de la Debug Unit es 8N1: la paridad opcional de TP2 se
+    // deja deshabilitada explícitamente. 'parity_en_i' tiene que estar
+    // conectado: si queda flotando, en simulación vale 'x' y el receptor
+    // nunca completa un byte, y en síntesis queda librado a lo que decida
+    // la herramienta con un pin sin conectar.
     wire [7:0] rx_dout;
     wire       rx_done_tick;
     uart_rx #(
@@ -84,8 +89,10 @@ module riscv_uart_top #(
         .rst_i          (rst_i),
         .rx_i           (rx_i),
         .s_tick_i       (s_tick),
+        .parity_en_i    (1'b0),
         .dout_o         (rx_dout),
-        .rx_done_tick_o (rx_done_tick)
+        .rx_done_tick_o (rx_done_tick),
+        .parity_err_o   ()
     );
 
     // --- Transmisor UART ---
@@ -101,6 +108,7 @@ module riscv_uart_top #(
         .tx_start_i     (tx_start),
         .s_tick_i       (s_tick),
         .din_i          (tx_din),
+        .parity_en_i    (1'b0), // 8N1, mismo motivo que en uart_rx
         .tx_done_tick_o (tx_done_tick),
         .tx_o           (tx_o)
     );

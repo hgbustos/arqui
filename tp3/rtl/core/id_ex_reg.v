@@ -9,19 +9,30 @@
 // esas sí hay que latchearlas, porque no hay un control_unit corriendo de
 // nuevo en EX que las pueda re-derivar de 'instr'.
 //
-// Una sola entrada de control: 'bubble_i'. A diferencia de IF/ID, acá NO
-// hay un "freeze": cuando hazard_unit pide burbujear (load-use o load
-// antes de un branch/jalr), este latch SIEMPRE actualiza, pero fuerza
-// TODOS los campos -- incluida 'instr', a 0x00000013 (NOP real, mismo
-// motivo que en if_id_reg.v) y todas las señales de control a 0 -- en vez
-// de dejar pasar lo que sea que control_unit esté decodificando ese ciclo
-// (que todavía no debe entrar a EX). Si sólo se pisara 'instr' y no las
-// señales de control, quedarían viajando señales de control viejas o
-// incorrectas: por eso se fuerzan las dos cosas juntas, siempre.
+// Dos entradas de control, con esta prioridad:
+//   1) write_en_i=0 (freeze global de la Debug Unit, ver riscv_core.v):
+//      mantiene el valor actual. Tiene que ganarle a la burbuja: si el
+//      core está congelado, la instrucción que ya está en este latch
+//      todavía no avanzó a EX/MEM (que también está congelado), así que
+//      pisarla con un NOP la haría desaparecer del programa.
+//   2) bubble_i=1 (con write_en_i=1): hazard_unit pide burbujear (load-use
+//      o load antes de un branch/jalr). El latch actualiza, pero fuerza
+//      TODOS los campos -- incluida 'instr', a 0x00000013 (NOP real, mismo
+//      motivo que en if_id_reg.v) y todas las señales de control a 0 -- en
+//      vez de dejar pasar lo que sea que control_unit esté decodificando
+//      ese ciclo (que todavía no debe entrar a EX). Si sólo se pisara
+//      'instr' y no las señales de control, quedarían viajando señales de
+//      control viejas o incorrectas: por eso se fuerzan las dos cosas
+//      juntas, siempre.
+//
+// El reset asíncrono se testea solo en el primer 'if' (template estándar
+// de flip-flop con clear asíncrono): la burbuja es una condición
+// síncrona y va en una rama aparte, no OR-eada con el reset.
 // =============================================================================
 module id_ex_reg (
     input  wire        clk_i,
     input  wire        rst_i,
+    input  wire        write_en_i,
     input  wire        bubble_i,
 
     input  wire [31:0] pc_i,
@@ -62,7 +73,27 @@ module id_ex_reg (
     localparam NOP = 32'h00000013; // addi x0, x0, 0
 
     always @(posedge clk_i, posedge rst_i) begin
-        if (rst_i || bubble_i) begin
+        if (rst_i) begin
+            pc_o         <= 32'b0;
+            rs1_data_o   <= 32'b0;
+            rs2_data_o   <= 32'b0;
+            imm_o        <= 32'b0;
+            instr_o      <= NOP;
+            reg_write_o  <= 1'b0;
+            alu_src_a_o  <= 1'b0;
+            alu_src_b_o  <= 1'b0;
+            alu_op_o     <= 2'b00;
+            mem_read_o   <= 1'b0;
+            mem_write_o  <= 1'b0;
+            mem_to_reg_o <= 1'b0;
+            is_jal_o     <= 1'b0;
+            is_jalr_o    <= 1'b0;
+            is_halt_o    <= 1'b0;
+        end
+        else if (!write_en_i) begin
+            // freeze: no se actualiza nada.
+        end
+        else if (bubble_i) begin
             pc_o         <= 32'b0;
             rs1_data_o   <= 32'b0;
             rs2_data_o   <= 32'b0;

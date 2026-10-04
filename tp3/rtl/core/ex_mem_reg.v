@@ -2,10 +2,12 @@
 // Módulo:         ex_mem_reg
 //
 // Descripción:
-// Latch EX/MEM. Sin stall ni flush: una vez que una instrucción entró a
-// EX de forma válida, siempre sigue de largo (los únicos descartes del
-// pipeline pasan en el límite IF/ID -- flush por salto tomado -- o en el
-// límite ID/EX -- burbuja por hazard --, nunca más adelante). Transporta
+// Latch EX/MEM. Sin stall ni flush propios: una vez que una instrucción
+// entró a EX de forma válida, siempre sigue de largo (los únicos descartes
+// del pipeline pasan en el límite IF/ID -- flush por salto tomado -- o en
+// el límite ID/EX -- burbuja por hazard --, nunca más adelante). La única
+// forma de detenerlo es 'write_en_i'=0, el freeze global de la Debug Unit
+// (modo paso a paso, ver riscv_core.v): ahí mantiene su valor. Transporta
 // 'ex_result' (la salida de la ALU, o PC+4 si la instrucción es jal/jalr:
 // ese mux ya se resolvió en EX, ver riscv_core.v) como dirección efectiva
 // para MEM si es load/store, 'rs2_data' ya adelantado (dato a escribir en
@@ -15,6 +17,7 @@
 module ex_mem_reg (
     input  wire        clk_i,
     input  wire        rst_i,
+    input  wire        write_en_i,
 
     input  wire [31:0] pc_i,
     input  wire [31:0] ex_result_i,
@@ -51,7 +54,7 @@ module ex_mem_reg (
             mem_to_reg_o <= 1'b0;
             is_halt_o    <= 1'b0;
         end
-        else begin
+        else if (write_en_i) begin
             pc_o         <= pc_i;
             ex_result_o  <= ex_result_i;
             rs2_data_o   <= rs2_data_i;

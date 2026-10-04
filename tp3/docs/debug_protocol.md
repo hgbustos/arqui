@@ -23,7 +23,7 @@ Un byte, primero de cada transacción.
 | `CMD_LOAD_PROG` | `0x10` | Carga un programa nuevo en `imem`. Ver framing abajo. Dispara soft-reset + limpieza completa de `imem`. No responde nada. |
 | `CMD_LOAD_DATA` | `0x11` | Carga datos iniciales en `dmem`. Mismo framing y mismo soft-reset, pero limpia y escribe `dmem` en vez de `imem`. No responde nada. |
 | `CMD_RUN` | `0x20` | Modo continuo: libera el pipeline hasta que el core se detiene (HALT explícito o implícito) y dispara un volcado completo. |
-| `CMD_STEP` | `0x21` | Modo paso a paso: libera el pipeline exactamente 1 ciclo de reloj y dispara un volcado completo. |
+| `CMD_STEP` | `0x21` | Modo paso a paso: libera el núcleo exactamente 1 ciclo de reloj y dispara un volcado completo. Fuera de ese ciclo el núcleo entero está congelado (ver abajo). |
 | `CMD_DUMP` | `0x22` | Dispara un volcado completo sin avanzar la ejecución (para ver el estado recién cargado, por ejemplo). |
 | `CMD_RESET` | `0x23` | Soft-reset manual (PC, banco de registros, los 4 latches de pipeline) sin tocar `imem`/`dmem`. No responde nada. |
 | cualquier otro | — | Se descarta (se consume el byte, sin efecto), igual que en `alu_link.v`. |
@@ -32,6 +32,16 @@ Un byte, primero de cada transacción.
 condición de halt frena `PC`/`IF-ID` sin importar `global_stall_i` (ver
 `hazard_unit.v`), así que "correr" o "step-ear" un core ya parado sólo
 vuelve a disparar el mismo volcado, sin ejecutar nada nuevo.
+
+**Congelamiento entre comandos.** Mientras la Debug Unit no está en
+`CMD_RUN` ni en el ciclo de un `CMD_STEP`, sostiene `global_stall_i=1`, que
+congela el núcleo **entero**: PC, los 4 latches, las escrituras al banco de
+registros y a `dmem`, y el contador de ciclos (ver `riscv_core.v`). Un
+ciclo congelado no modifica ningún estado, así que lo que se ve en un
+volcado es exactamente el estado del pipeline en el ciclo en que se
+detuvo, aunque el volcado tarde ~10^7 ciclos en transmitirse. Tras `k`
+`CMD_STEP` el estado es idéntico, bit a bit, al de una ejecución continua
+en el ciclo `k` (lo verifica `tb_riscv_core.v`, sección 10).
 
 ### Framing de `CMD_LOAD_PROG` / `CMD_LOAD_DATA`
 
@@ -69,8 +79,8 @@ este orden exacto.
 | # palabra | Contenido | Detalle |
 |---|---|---|
 | 0 | `SYNC` | `0xAA55AA55` fijo — marca de sincronismo para que el host se pueda recuperar si perdió un byte. |
-| 1 | `STATUS` | bit0=`core_halted`, bit1=`branch_taken`, bit2=`stalled` (`~pc_write_en`), resto en 0. |
-| 2 | `CYCLE_COUNT` | Ciclos transcurridos desde el último reset/soft-reset. |
+| 1 | `STATUS` | bit0=`core_halted`, bit1=`branch_taken`, bit2=`stalled` (el pipeline frena el PC por un hazard o por un HALT en ID; **no** incluye el congelamiento de la Debug Unit, que está presente en todo volcado), resto en 0. |
+| 2 | `CYCLE_COUNT` | Ciclos **ejecutados** desde el último reset/soft-reset: cuenta sólo los ciclos en que el núcleo avanzó (incluidos stalls de hazard y drenaje tras HALT), no los ciclos congelados entre comandos. Tras `N` `CMD_STEP` vale `N`. |
 | 3–4 | IF/ID | `pc`, `instr` |
 | 5–10 | ID/EX | `pc`, `instr`, `rs1_data`, `rs2_data`, `imm`, `control` |
 | 11–15 | EX/MEM | `pc`, `instr`, `ex_result`, `rs2_data`, `control` |

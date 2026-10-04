@@ -2,8 +2,9 @@
 // Módulo:         mem_wb_reg
 //
 // Descripción:
-// Latch MEM/WB, el último del pipeline. Sin stall ni flush, por el mismo
-// motivo que ex_mem_reg.v. Transporta 'result' (pasante desde EX/MEM:
+// Latch MEM/WB, el último del pipeline. Sin stall ni flush propios, por el
+// mismo motivo que ex_mem_reg.v; igual que ese latch, sólo se detiene con
+// 'write_en_i'=0 (freeze global de la Debug Unit). Transporta 'result' (pasante desde EX/MEM:
 // resultado de ALU o valor de enlace de jal/jalr), 'mem_read_data' (lo
 // leído de dmem este ciclo, ya alineado/extendido en signo por dmem.v) e
 // 'instr' para que WB -- y, sobre todo, la Debug Unit -- pueda mostrar qué
@@ -12,6 +13,7 @@
 module mem_wb_reg (
     input  wire        clk_i,
     input  wire        rst_i,
+    input  wire        write_en_i,
 
     input  wire [31:0] pc_i,
     input  wire [31:0] result_i,
@@ -42,7 +44,7 @@ module mem_wb_reg (
             mem_to_reg_o    <= 1'b0;
             is_halt_o       <= 1'b0;
         end
-        else begin
+        else if (write_en_i) begin
             pc_o            <= pc_i;
             result_o        <= result_i;
             mem_read_data_o <= mem_read_data_i;

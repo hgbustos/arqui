@@ -10,9 +10,9 @@
 //
 // Dos entradas de control, con esta prioridad (igual que decide
 // hazard_unit, acá se refuerza en el propio latch por robustez):
-//   1) write_en_i=0 (freeze, por un stall de hazard_unit o por halt):
-//      mantiene el valor actual, no se pierde la instrucción que está
-//      esperando.
+//   1) write_en_i=0 (freeze, por un stall de hazard_unit, por halt o por
+//      el freeze global de la Debug Unit): mantiene el valor actual, no se
+//      pierde la instrucción que está esperando.
 //   2) flush_i=1 (con write_en_i=1): la instrucción que se acaba de
 //      buscar quedó mal encaminada (un salto tomado la invalidó) -- se
 //      reemplaza por un NOP real de RV32I ('addi x0,x0,0' = 0x00000013),

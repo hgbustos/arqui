@@ -5,21 +5,22 @@ sigue. Para la justificación de cada decisión de diseño (por qué se
 resuelven los saltos en ID, por qué HALT es un opcode custom, etc.) ver
 **`tp3/informe.md`** — este README no la repite.
 
-## Estado (actualizado 2026-08-18)
+## Estado (actualizado 2026-10-04)
 
 | Fase | Contenido | Estado |
 |---|---|---|
-| 1 | Datapath del pipeline (`rtl/core/`) | ✅ 201 tests |
-| 2 | Debug Unit + Dump Unit + top UART (`rtl/debug/`) | ✅ 260 tests |
+| 1 | Datapath del pipeline (`rtl/core/`) | ✅ 300 tests |
+| 2 | Debug Unit + Dump Unit + top UART (`rtl/debug/`) | ✅ 96 tests (+162 de regresión de la ALU de TP1) |
 | 3 | Ensamblador + protocolo + CLI + GUI (`host/`) | ✅ 61 tests |
 | 4 | Proyecto Vivado, síntesis, timing closure | 🟡 constraints listos (`constraints/riscv_uart_top.xdc`) — falta crear el proyecto y correr síntesis, ver `synt/README.md` |
 | 5 | Validación en una Basys 3 real | ⬜ pendiente — necesita la placa |
 
-**522/522 tests pasando** (461 Verilog + 61 Python), 0 fallos —
-re-verificado en vivo el 2026-08-18, no solo recordado de una corrida
-anterior. Todo lo de las Fases 1-3 está verificado en **simulación**
-(Icarus Verilog) y con **tests unitarios** de Python — nada se corrió
-todavía en un FPGA real.
+**Verilog: 558/558 tests pasando**, 0 fallos, corridos el 2026-10-04
+con Icarus Verilog 12 (los 15 testbenches de abajo). **Python: 61
+tests**, cuya última corrida registrada es del 2026-08-18; no se
+volvieron a correr después de los cambios del 2026-09-15 en `host/`.
+Todo lo de las Fases 1-3 está verificado en **simulación** y con
+**tests unitarios** de Python — nada se corrió todavía en un FPGA real.
 
 ## Estructura de archivos
 
@@ -40,10 +41,13 @@ tp3/
 └── README.md      este archivo
 ```
 
-`tp1/ALU.v` se extendió in-place (aditivo) con `sll`/`slt`/`sltu`. Nada
-más fuera de `tp3/` se tocó. `tp2/rtl/{baud_generator,uart_rx,uart_tx,
-uart_interface}.v` se referencian directo desde `tp3/rtl/debug/
-riscv_uart_top.v`, sin copiarlos.
+`tp1/ALU.v` se extendió in-place (aditivo) con `sll`/`slt`/`sltu`. Fuera
+de `tp3/`, lo único que se tocó además fue `tp2/rtl/uart_rx.v`, para
+restaurar la etiqueta `PARITY:` que un commit de limpieza de
+comentarios había borrado por error (no compilaba; ver informe §4).
+`tp2/rtl/{baud_generator,uart_rx,uart_tx,uart_interface}.v` se
+referencian directo desde `tp3/rtl/debug/riscv_uart_top.v`, sin
+copiarlos.
 
 ## Cómo correr las verificaciones
 
@@ -127,6 +131,11 @@ leer Worst Negative Slack, qué hacer si no cierra a 100MHz).
   (mismo ciclo). Es necesario para que un productor exactamente 3
   instrucciones antes de su consumidor funcione — ver informe §3.5 antes
   de tocar ese archivo.
+- **Todo elemento con estado del núcleo tiene que respetar `core_en`**
+  (`riscv_core.v`). Es la invariante del modo paso a paso: un ciclo
+  congelado por la Debug Unit no puede modificar nada. Si se agrega un
+  registro al core y se olvida esto, la sección 10 de `tb_riscv_core.v`
+  lo detecta. Ver informe §3.9.
 - **`debug_unit.v`/`dump_unit.v` usan el reset FÍSICO** (`rst_i`), nunca
   `core_soft_reset_o` (que ellos mismos generan para resetear el core) —
   si se resetearan a sí mismos con esa señal, perderían su propio estado

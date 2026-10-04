@@ -18,10 +18,22 @@
 // razón por la que el propio ISA se diseñó así).
 //
 // Ningún stall/freeze/burbuja de este módulo (ni de hazard_unit, que es
-// quien los decide) toca el clock: todo son enables síncronos sobre PC,
-// IF/ID e ID/EX. 'global_stall_i' es la entrada de control externa (Debug
-// Unit, TP3 Fase 2) para el modo paso a paso: combina con las razones
-// internas de freeze de la misma manera (nunca gatea el clock tampoco).
+// quien los decide) toca el clock: todo son enables síncronos.
+//
+// Dos niveles de control de flujo, independientes entre sí:
+//   - Internos (hazard_unit): stall de PC e IF/ID, burbuja en ID/EX, flush
+//     de IF/ID. Son decisiones del propio pipeline, ciclo a ciclo.
+//   - Externo ('global_stall_i', de la Debug Unit): congela el núcleo
+//     ENTERO a través de 'core_en'. Es la base del modo paso a paso -- un
+//     CMD_STEP baja 'global_stall_i' exactamente un ciclo -- y por eso
+//     tiene que cumplir una invariante estricta: un ciclo congelado no
+//     modifica NINGÚN estado del núcleo (PC, los 4 latches, banco de
+//     registros, dmem, contador de ciclos). Si algún elemento con estado
+//     quedara afuera, la instrucción retenida en IF/ID se volvería a
+//     emitir hacia EX en cada ciclo congelado. Cualquier registro nuevo
+//     que se agregue al núcleo tiene que respetar 'core_en'.
+//   El congelamiento domina a las decisiones internas: con core_en=0 no
+//   hay burbuja ni flush que valga (ver if_id_reg.v / id_ex_reg.v).
 //
 // Puertos de carga separados hacia imem/dmem ('*_load_*'): pensados para
 // la Debug Unit de Fase 2, y ya usados desde esta Fase 1 por
@@ -100,14 +112,16 @@ module riscv_core #(
 
     // =========================================================================
     // Declaraciones adelantadas: 'ex_result' y 'wb_write_data' se usan en el
-    // mux de forwarding hacia ID (más arriba en el archivo que donde se
-    // calculan de verdad, en EX y WB) -- en Verilog no importa el orden
-    // textual de módulos/assigns combinacionales, pero se declaran acá para
-    // que quede documentado de entrada que son señales compartidas entre
-    // etapas no adyacentes.
+    // mux de forwarding hacia ID, y 'wb_write_data'/'wb_reg_write' en el
+    // puerto de escritura del banco de registros -- todo en ID, más arriba
+    // en el archivo que donde se calculan de verdad (EX y WB). En Verilog no
+    // importa el orden textual de módulos/assigns combinacionales, pero se
+    // declaran acá para que quede documentado de entrada que son señales
+    // compartidas entre etapas no adyacentes.
     // =========================================================================
     wire [31:0] ex_result;      // salida de EX ya resuelta (ALU o PC+4 de jal/jalr)
     wire [31:0] wb_write_data;  // dato final que se escribe en WB
+    wire        wb_reg_write;   // write enable de WB hacia el banco de registros (ya condicionado a core_en)
 
     // =========================================================================
     // IF
@@ -118,24 +132,31 @@ module riscv_core #(
     wire [31:0] branch_target;
     wire [31:0] pc_next = branch_taken ? branch_target : pc_plus4;
 
+    // Enable global del núcleo (ver header): 0 = ciclo congelado por la
+    // Debug Unit, ningún elemento con estado del núcleo cambia.
+    wire core_en = ~global_stall_i;
+
     wire hazard_pc_we, hazard_ifid_we, hazard_ifid_flush, hazard_idex_bubble;
-    wire pc_write_en    = hazard_pc_we    & ~global_stall_i;
-    wire if_id_write_en = hazard_ifid_we  & ~global_stall_i;
+    wire pc_write_en    = hazard_pc_we    & core_en;
+    wire if_id_write_en = hazard_ifid_we  & core_en;
 
     always @(posedge clk_i, posedge rst_i) begin
         if (rst_i) pc_reg <= 32'b0;
         else if (pc_write_en) pc_reg <= pc_next;
     end
 
-    // Ciclos transcurridos desde el ultimo reset/soft-reset (no desde el
-    // power-on del FPGA): cuenta SIEMPRE que no haya reset, incluso
-    // congelado (stall/halt) -- es "cuanto tardo esta ejecucion", el dato
-    // util para la Debug Unit y para correlacionar con la frecuencia real
-    // una vez cerrado el timing en Vivado (Fase 4).
+    // Ciclos EJECUTADOS desde el ultimo reset/soft-reset: cuenta cada ciclo
+    // en que el núcleo avanzó (core_en=1), incluidos los stalls internos de
+    // hazard y los ciclos de drenaje tras un HALT -- son ciclos reales del
+    // pipeline. NO cuenta los ciclos congelados por la Debug Unit (el tiempo
+    // entre comandos, o lo que tarda un volcado por UART): así, tras N
+    // CMD_STEP vale exactamente N, y tras un CMD_RUN es la duración real de
+    // la ejecución, el dato útil para correlacionar con la frecuencia del
+    // clock una vez cerrado el timing en Vivado (Fase 4).
     reg [31:0] cycle_count_reg;
     always @(posedge clk_i, posedge rst_i) begin
-        if (rst_i) cycle_count_reg <= 32'b0;
-        else       cycle_count_reg <= cycle_count_reg + 32'd1;
+        if (rst_i)        cycle_count_reg <= 32'b0;
+        else if (core_en) cycle_count_reg <= cycle_count_reg + 32'd1;
     end
     assign cycle_count_o = cycle_count_reg;
 
@@ -207,7 +228,7 @@ module riscv_core #(
         .rs2_data_o (id_rs2_data_raw),
         .rd_addr_i  (mem_wb_rd_addr),
         .rd_data_i  (wb_write_data),
-        .reg_write_i(mem_wb_reg_write),
+        .reg_write_i(wb_reg_write),
         .regs_flat_o(regs_flat_o)
     );
 
@@ -252,8 +273,12 @@ module riscv_core #(
         .target_pc_o   (branch_target)
     );
 
+    // Para la Debug Unit (bit 'stalled' del STATUS): la decisión PROPIA del
+    // pipeline (stall por hazard o freeze por HALT), sin el freeze externo.
+    // Si incluyera global_stall_i, todo volcado reportaría stalled=1, porque
+    // el núcleo siempre está congelado mientras se transmite.
     assign branch_taken_o = branch_taken;
-    assign pc_write_en_o  = pc_write_en;
+    assign pc_write_en_o  = hazard_pc_we;
 
     hazard_unit u_hazard (
         .id_rs1_addr_i    (id_rs1_addr),
@@ -283,6 +308,7 @@ module riscv_core #(
     id_ex_reg u_id_ex (
         .clk_i       (clk_i),
         .rst_i       (rst_i),
+        .write_en_i  (core_en),
         .bubble_i    (hazard_idex_bubble),
         .pc_i        (if_id_pc),
         .rs1_data_i  (id_rs1_data_raw),
@@ -404,6 +430,7 @@ module riscv_core #(
     ex_mem_reg u_ex_mem (
         .clk_i       (clk_i),
         .rst_i       (rst_i),
+        .write_en_i  (core_en),
         .pc_i        (id_ex_pc),
         .ex_result_i (ex_result),
         .rs2_data_i  (ex_rs2_fwd),
@@ -430,13 +457,17 @@ module riscv_core #(
     wire [4:0] ex_mem_rd_addr = ex_mem_instr[11:7];
     wire [2:0] ex_mem_funct3  = ex_mem_instr[14:12];
 
+    // Mismo criterio que 'wb_reg_write': el store sólo se ejecuta en un
+    // ciclo en que el núcleo avanza.
+    wire mem_store_en = ex_mem_mem_write & core_en;
+
     wire [31:0] dmem_rdata;
     dmem #(.DEPTH_WORDS(DMEM_DEPTH_WORDS)) u_dmem (
         .clk_i       (clk_i),
         .addr_i      (ex_mem_ex_result),
         .wdata_i     (ex_mem_rs2_data),
         .funct3_i    (ex_mem_funct3),
-        .mem_write_i (ex_mem_mem_write),
+        .mem_write_i (mem_store_en),
         .rdata_o     (dmem_rdata),
         .load_en_i   (dmem_load_en_i),
         .load_addr_i (dmem_load_addr_i),
@@ -456,6 +487,7 @@ module riscv_core #(
     mem_wb_reg u_mem_wb (
         .clk_i          (clk_i),
         .rst_i          (rst_i),
+        .write_en_i     (core_en),
         .pc_i           (ex_mem_pc),
         .result_i       (ex_mem_ex_result),
         .mem_read_data_i(dmem_rdata),
@@ -477,6 +509,14 @@ module riscv_core #(
     // =========================================================================
     wire [4:0] mem_wb_rd_addr = mem_wb_instr[11:7];
     assign wb_write_data = mem_wb_mem_to_reg ? mem_wb_mem_read_data : mem_wb_result;
+
+    // La escritura de WB es un efecto lateral: se condiciona a core_en para
+    // que un ciclo congelado no la ejecute antes de tiempo. Reescribir el
+    // mismo valor sería inofensivo, pero el estado visible tiene que ser el
+    // del ciclo exacto en que se detuvo el núcleo, no uno adelantado. El
+    // forwarding hacia EX/ID sigue mirando 'mem_wb_reg_write' sin
+    // condicionar: decide de dónde sale un operando, no escribe nada.
+    assign wb_reg_write = mem_wb_reg_write & core_en;
     assign core_halted_o = mem_wb_is_halt;
 
     // =========================================================================

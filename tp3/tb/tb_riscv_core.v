@@ -15,15 +15,19 @@
 //   3) Loads/stores (todos los anchos + signo) 7) Load-use hazard
 //   4) LUI + JAL/JALR (valor de enlace + target) 8) Load-antes-de-branch (0-gap y 1-gap)
 //                                                  9) HALT explícito e implícito
+//  10) Modo paso a paso (global_stall_i): el freeze es una pausa perfecta
 //
-// Cada programa se corre de punta a punta hasta HALT (no se inspecciona
-// ciclo a ciclo): si el valor final de un registro es el esperado, es
-// evidencia de que todo el camino que lo produjo -- decode, forwarding,
-// hazards, memoria -- funcionó bien, que es lo que realmente importa acá.
+// Los programas 1-9 se corren de punta a punta hasta HALT (no se
+// inspecciona ciclo a ciclo): si el valor final de un registro es el
+// esperado, es evidencia de que todo el camino que lo produjo -- decode,
+// forwarding, hazards, memoria -- funcionó bien, que es lo que realmente
+// importa ahí. El 10 sí compara ciclo a ciclo, porque lo que verifica es
+// justamente la equivalencia ciclo a ciclo entre correr y paso a paso.
 // =============================================================================
 module tb_riscv_core;
 
     parameter CLK_PERIOD = 10;
+    localparam TB_DMEM_WORDS = 256;
 
     reg tb_clk, tb_rst, tb_global_stall;
     reg tb_imem_load_en, tb_imem_load_clear;
@@ -34,13 +38,15 @@ module tb_riscv_core;
 
     wire [32*32-1:0] regs_flat;
     wire core_halted;
+    wire branch_taken, pc_write_en;
+    wire [31:0] cycle_count;
 
     integer pass_count, fail_count;
 
     initial tb_clk = 0;
     always #(CLK_PERIOD/2) tb_clk = ~tb_clk;
 
-    riscv_core #(.IMEM_DEPTH_WORDS(256), .DMEM_DEPTH_WORDS(256)) uut (
+    riscv_core #(.IMEM_DEPTH_WORDS(256), .DMEM_DEPTH_WORDS(TB_DMEM_WORDS)) uut (
         .clk_i           (tb_clk),
         .rst_i           (tb_rst),
         .global_stall_i  (tb_global_stall),
@@ -58,7 +64,9 @@ module tb_riscv_core;
         .dmem_dbg_rdata_o(),
         .regs_flat_o     (regs_flat),
         .core_halted_o   (core_halted),
-        .cycle_count_o   ()
+        .branch_taken_o  (branch_taken),
+        .pc_write_en_o   (pc_write_en),
+        .cycle_count_o   (cycle_count)
     );
 
     // ------------------------------------------------------------------
@@ -175,6 +183,92 @@ module tb_riscv_core;
             end
         end
     endtask
+
+    task check_val;
+        input [511:0] label;
+        input [31:0]  got;
+        input [31:0]  expected;
+        begin
+            if (got === expected) begin
+                pass_count = pass_count + 1;
+                $display("  -> EXITO | %0s: %0d", label, got);
+            end else begin
+                fail_count = fail_count + 1;
+                $error("  -> FALLO | %0s: esperado=%0d, recibido=%0d", label, expected, got);
+            end
+        end
+    endtask
+
+    // ------------------------------------------------------------------
+    // Snapshot del estado completo del núcleo (sección 10)
+    // ------------------------------------------------------------------
+    // Todo lo que la Dump Unit mandaría en un volcado: los bits de STATUS
+    // que dependen del core (pc_write_en, branch_taken; core_halted ya
+    // viaja en MEM/WB), el PC, los 4 latches con sus señales de control,
+    // el contador de ciclos, los 32 registros y un checksum de toda la
+    // dmem. Dos snapshots iguales = dos volcados idénticos.
+    //
+    // Layout en bloques de 32 bits, para poder ubicar una diferencia:
+    // bloque 0 = checksum de dmem, bloques 1..32 = x0..x31, bloque 33 =
+    // contador de ciclos, bloques 34 en adelante = PC, latches y STATUS.
+    localparam SNAP_W = 2 + 32 + 2*32 + (5*32 + 11) + (4*32 + 5) + (4*32 + 3) + 32 + 32*32 + 32;
+    localparam MAX_GOLDEN = 128;
+
+    task take_snapshot;
+        output [SNAP_W-1:0] snap;
+        reg [31:0] dmem_sum;
+        integer w;
+        begin
+            // Rotar-y-XOR: sensible al contenido Y a la posición de cada palabra.
+            dmem_sum = 32'b0;
+            for (w = 0; w < TB_DMEM_WORDS; w = w + 1)
+                dmem_sum = {dmem_sum[30:0], dmem_sum[31]} ^ uut.u_dmem.mem[w];
+            snap = {
+                pc_write_en, branch_taken,
+                uut.pc_reg,
+                uut.if_id_pc, uut.if_id_instr,
+                uut.id_ex_pc, uut.id_ex_instr, uut.id_ex_rs1_data, uut.id_ex_rs2_data, uut.id_ex_imm,
+                uut.id_ex_reg_write, uut.id_ex_alu_src_a, uut.id_ex_alu_src_b, uut.id_ex_alu_op,
+                uut.id_ex_mem_read, uut.id_ex_mem_write, uut.id_ex_mem_to_reg,
+                uut.id_ex_is_jal, uut.id_ex_is_jalr, uut.id_ex_is_halt,
+                uut.ex_mem_pc, uut.ex_mem_instr, uut.ex_mem_ex_result, uut.ex_mem_rs2_data,
+                uut.ex_mem_reg_write, uut.ex_mem_mem_read, uut.ex_mem_mem_write,
+                uut.ex_mem_mem_to_reg, uut.ex_mem_is_halt,
+                uut.mem_wb_pc, uut.mem_wb_instr, uut.mem_wb_result, uut.mem_wb_mem_read_data,
+                uut.mem_wb_reg_write, uut.mem_wb_mem_to_reg, uut.mem_wb_is_halt,
+                cycle_count, regs_flat, dmem_sum
+            };
+        end
+    endtask
+
+    // Diagnóstico ante una falla: dice QUÉ parte del estado difiere.
+    task report_snapshot_diff;
+        input [SNAP_W-1:0] got;
+        input [SNAP_W-1:0] expected;
+        integer c;
+        begin
+            for (c = 0; c < (SNAP_W + 31) / 32; c = c + 1) begin
+                if (got[32*c +: 32] !== expected[32*c +: 32]) begin
+                    if (c == 0)
+                        $display("           dmem difiere (checksum esperado=0x%08h, recibido=0x%08h)",
+                                 expected[31:0], got[31:0]);
+                    else if (c <= 32)
+                        $display("           x%0d difiere: esperado=0x%08h, recibido=0x%08h",
+                                 c - 1, expected[32*c +: 32], got[32*c +: 32]);
+                    else if (c == 33)
+                        $display("           contador de ciclos difiere: esperado=%0d, recibido=%0d",
+                                 expected[32*c +: 32], got[32*c +: 32]);
+                    else
+                        $display("           PC/latches/STATUS difieren (bloque %0d)", c);
+                end
+            end
+        end
+    endtask
+
+    reg [SNAP_W-1:0] golden [0:MAX_GOLDEN-1]; // corrida libre: estado tras k ciclos
+    reg [SNAP_W-1:0] snap, snap_before;
+    integer n_golden, k, gap, frozen_total;
+    reg freeze_ok, step_ok;
 
     // ------------------------------------------------------------------
     // Programa de prueba
@@ -415,6 +509,131 @@ module tb_riscv_core;
         load_program; run_until_halt;
         check_reg("halt implicito: x1 correcto", 1, 32'd42);
         check_reg("halt implicito: x2 correcto", 2, 32'd99);
+
+        // ================================================================
+        $display("\n===== 10) Modo paso a paso: global_stall congela TODO el nucleo =====");
+        // ================================================================
+        // Propiedad verificada: congelar el nucleo es una PAUSA perfecta.
+        //  (a) Durante un freeze no cambia ningun estado, por largo que sea
+        //      (en hardware dura lo que tarda un volcado por UART: ~10^7
+        //      ciclos).
+        //  (b) Tras k pasos de exactamente 1 ciclo, con freezes de largo
+        //      variable intercalados, el estado es identico bit a bit al de
+        //      una corrida libre en el ciclo k. O sea: el volcado de cada
+        //      CMD_STEP muestra exactamente el pipeline real de ese ciclo.
+        //
+        // Primero se graba la corrida libre (referencia), despues se repite
+        // el mismo programa paso a paso comparando contra ella. El programa
+        // junta los casos donde un freeze incompleto rompe algo: una
+        // instruccion NO idempotente (addi x1,x1,1: si se re-emitiera
+        // durante el freeze, x1 subiria en cada ciclo congelado), un store
+        // (escritura en dmem), un load-use (burbuja en ID/EX), saltos
+        // tomados (flush de IF/ID), jal (valor de enlace) y un load justo
+        // antes de un branch (stall de 2 ciclos).
+        prog_mem[0]  = i_addi(1, 0, 0);          // addr0:  x1 = 0 (contador)
+        prog_mem[1]  = i_addi(2, 0, 3);           // addr4:  x2 = 3 (limite)
+        prog_mem[2]  = i_addi(5, 0, 8);            // addr8:  x5 = 8 (base: palabra 2 de dmem)
+        prog_mem[3]  = i_addi(1, 1, 1);             // addr12: loop: x1 = x1 + 1 (NO idempotente)
+        prog_mem[4]  = i_sw  (5, 1, 12'd0);           // addr16: mem[x5] = x1
+        prog_mem[5]  = i_lw  (3, 5, 12'd0);            // addr20: x3 = mem[x5]
+        prog_mem[6]  = i_add (4, 3, 1);                 // addr24: x4 = x3 + x1 (load-use -> burbuja)
+        prog_mem[7]  = i_bne (1, 2, -13'sd16);           // addr28: x1 != 3 -> vuelve a loop (flush)
+        prog_mem[8]  = i_jal (6, 21'd8);                  // addr32: x6 = 36; salta a 40
+        prog_mem[9]  = i_addi(7, 0, 999);                  // addr36: SKIPPED
+        prog_mem[10] = i_lw  (8, 5, 12'd0);                 // addr40: x8 = 3
+        prog_mem[11] = i_beq (8, 2, 13'd8);                  // addr44: load justo antes (0-gap), tomado -> 52
+        prog_mem[12] = i_addi(9, 0, 999);                     // addr48: SKIPPED
+        prog_mem[13] = i_halt(0);                              // addr52
+        prog_len = 14;
+
+        // --- (1) Corrida libre de referencia, grabando el estado de cada ciclo ---
+        tb_global_stall = 0;
+        load_program;
+        n_golden = 0;
+        take_snapshot(snap);
+        golden[0] = snap;
+        while (!core_halted && n_golden < MAX_GOLDEN - 4) begin
+            @(posedge tb_clk); #1;
+            n_golden = n_golden + 1;
+            take_snapshot(snap);
+            golden[n_golden] = snap;
+        end
+        if (!core_halted) begin
+            fail_count = fail_count + 1;
+            $error("  -> FALLO | Corrida de referencia: no se alcanzo HALT en %0d ciclos", n_golden);
+        end
+        // Unos ciclos mas tras el HALT: el paso a paso tambien tiene que
+        // coincidir con el pipeline ya detenido y drenando.
+        repeat (3) begin
+            @(posedge tb_clk); #1;
+            n_golden = n_golden + 1;
+            take_snapshot(snap);
+            golden[n_golden] = snap;
+        end
+        $display("  Corrida libre de referencia: HALT en WB en el ciclo %0d (se graban %0d ciclos)",
+                 n_golden - 3, n_golden);
+
+        // --- (2) El mismo programa, paso a paso ---
+        tb_global_stall = 1; // como la Debug Unit: el core arranca congelado
+        load_program;
+        take_snapshot(snap);
+        if (snap === golden[0]) begin
+            pass_count = pass_count + 1;
+            $display("  -> EXITO | estado inicial congelado == corrida libre (ciclo 0)");
+        end else begin
+            fail_count = fail_count + 1;
+            $error("  -> FALLO | estado inicial congelado != corrida libre (ciclo 0)");
+            report_snapshot_diff(snap, golden[0]);
+        end
+        check_val("freeze externo no marca stalled (pc_write_en_o=1)", pc_write_en, 1);
+
+        frozen_total = 0;
+        for (k = 1; k <= n_golden; k = k + 1) begin
+            // Freeze de largo variable antes de cada paso (cada 8 pasos,
+            // uno largo, para emular el tiempo de un volcado).
+            gap = ((k % 8) == 0) ? 200 : 1 + ((k * 7) % 5);
+            snap_before = snap;
+            repeat (gap) @(posedge tb_clk);
+            #1;
+            take_snapshot(snap);
+            frozen_total = frozen_total + gap;
+            freeze_ok = (snap === snap_before);
+            if (!freeze_ok) begin
+                $error("  -> FALLO | paso %0d: el estado cambio durante %0d ciclos congelados", k, gap);
+                report_snapshot_diff(snap, snap_before);
+            end
+
+            // Un CMD_STEP: global_stall en 0 durante exactamente un flanco.
+            tb_global_stall = 0;
+            @(posedge tb_clk); #1;
+            tb_global_stall = 1;
+            #1;
+            take_snapshot(snap);
+            step_ok = (snap === golden[k]);
+            if (!step_ok) begin
+                $error("  -> FALLO | paso %0d: estado != corrida libre en el ciclo %0d", k, k);
+                report_snapshot_diff(snap, golden[k]);
+            end
+
+            if (freeze_ok) pass_count = pass_count + 1; else fail_count = fail_count + 1;
+            if (step_ok)   pass_count = pass_count + 1; else fail_count = fail_count + 1;
+            if (freeze_ok && step_ok)
+                $display("  -> EXITO | paso %0d: %0d ciclos congelados sin cambios, estado == corrida libre (ciclo %0d)",
+                         k, gap, k);
+        end
+
+        // --- (3) Resultado final, contra valores calculados a mano ---
+        $display("  (%0d pasos, %0d ciclos congelados intercalados en total)", n_golden, frozen_total);
+        check_val("core detenido (HALT en WB) tras el ultimo paso", core_halted, 1);
+        check_val("contador de ciclos == pasos (no cuenta congelados)", cycle_count, n_golden);
+        check_reg("contador: no se re-incremento en los freezes", 1, 32'd3);
+        check_reg("load dentro del loop",                          3, 32'd3);
+        check_reg("load-use dentro del loop",                      4, 32'd6);
+        check_reg("valor de enlace de jal",                        6, 32'd36);
+        check_reg("jal no ejecuta lo saltado",                     7, 32'h0);
+        check_reg("load justo antes del branch",                   8, 32'd3);
+        check_reg("beq tomado no ejecuta lo saltado",              9, 32'h0);
+        check_mem("store del loop",                                2, 32'd3);
 
         $display("\n========================================");
         $display("Resultado: %0d EXITO / %0d FALLO", pass_count, fail_count);
