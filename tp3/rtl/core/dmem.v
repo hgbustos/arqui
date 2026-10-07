@@ -15,6 +15,12 @@
 //   100      byte       sin signo   (lbu)
 //   101      media pal. sin signo   (lhu)
 //
+// Accesos desalineados: no hay excepciones, se usa la palabra o media
+// palabra ALINEADA que contiene la dirección (lw/sw ignoran addr[1:0],
+// lh/lhu/sh sólo miran addr[1]). Fuera de rango: sólo se usan los bits
+// [ADDR_BITS+1:2] de la dirección, así que una dirección más allá de
+// DEPTH_WORDS se pliega sobre el principio. Ver tp3/informe.md §2.2.
+//
 // La lectura es incondicional (no depende de mem_read_i): siempre expone
 // la palabra en 'addr_i' ya recortada/extendida, y quien la usa (WB, vía
 // mem_to_reg) simplemente la ignora cuando la instrucción no es un load.

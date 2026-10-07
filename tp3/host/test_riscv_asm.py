@@ -208,6 +208,14 @@ class TestDesensamblador(unittest.TestCase):
         texto = disassemble_word(w, pc=0x100)
         self.assertIn("0x00000108", texto)
 
+    def test_shift_inmediato_con_funct7_invalido_no_es_srli(self):
+        # Mismo criterio que control_unit.v: funct7 tiene que ser 0000000 o
+        # 0100000 completo, no alcanza con mirar el bit 5 (sería HALT implícito)
+        srli = assemble("srli x1, x2, 3")[0]
+        self.assertEqual(disassemble_word(srli), "srli x1, x2, 3")
+        self.assertIn("desconocida", disassemble_word(srli | (0b0000001 << 25)))
+        self.assertEqual(disassemble_word(assemble("srai x1, x2, 3")[0]), "srai x1, x2, 3")
+
 
 class TestProgramasCompletosDeTbRiscvCore(unittest.TestCase):
     """Mismos programas (traducidos a texto ensamblador) que ya corrieron

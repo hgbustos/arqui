@@ -25,9 +25,27 @@ CMD_RUN = 0x20
 CMD_STEP = 0x21
 CMD_DUMP = 0x22
 CMD_RESET = 0x23
+# Pausa de un CMD_RUN en curso: durante RUN cualquier byte detiene el core
+# y dispara el volcado; fuera de RUN, este valor es un comando desconocido
+# y la Debug Unit lo descarta (por eso es seguro mandarlo "tarde").
+CMD_BREAK = 0x24
 
 SYNC_WORD = 0xAA55AA55
-FIXED_WORDS = 53  # cantidad de palabras fijas antes de la seccion de dmem
+FIXED_WORDS = 55  # cantidad de palabras fijas antes de la seccion de dmem
+IF_WORD = 53      # palabras 53-54: etapa IF (pc, instr), al final del bloque fijo
+
+# Selecciones de forwarding (STATUS[15:8]), mismas codificaciones que
+# forwarding_unit.v: lo que el hardware decidio en el ciclo del volcado.
+FWD_EX_NONE, FWD_EX_EXMEM, FWD_EX_MEMWB = 0, 1, 2             # hacia la ALU (EX)
+FWD_ID_NONE, FWD_ID_EX, FWD_ID_EXMEM, FWD_ID_MEMWB = 0, 1, 2, 3  # hacia branch_unit (ID)
+
+# Capacidad de las memorias del bitstream: tienen que coincidir con los
+# parametros IMEM_DEPTH_WORDS/DMEM_DEPTH_WORDS de riscv_uart_top.v. El
+# hardware no avisa si se carga de mas: imem.v/dmem.v usan solo los bits
+# bajos de la direccion, asi que la palabra N "da la vuelta" y pisa la 0
+# sin ningun error. Por eso se valida aca, antes de mandar nada.
+IMEM_WORDS_DEFAULT = 1024
+DMEM_WORDS_DEFAULT = 256
 
 
 class ProtocolError(Exception):
@@ -57,11 +75,20 @@ def build_load_packet(cmd: int, words: list[int]) -> bytes:
     return bytes(packet)
 
 
-def build_load_prog_packet(words: list[int]) -> bytes:
+def _check_capacity(n_words: int, capacity: int, what: str) -> None:
+    if n_words > capacity:
+        raise ProtocolError(
+            f"{what}: {n_words} palabras no entran en {capacity} "
+            f"(se pisaria el principio de la memoria)")
+
+
+def build_load_prog_packet(words: list[int], imem_words: int = IMEM_WORDS_DEFAULT) -> bytes:
+    _check_capacity(len(words), imem_words, "programa demasiado grande para la imem")
     return build_load_packet(CMD_LOAD_PROG, words)
 
 
-def build_load_data_packet(words: list[int]) -> bytes:
+def build_load_data_packet(words: list[int], dmem_words: int = DMEM_WORDS_DEFAULT) -> bytes:
+    _check_capacity(len(words), dmem_words, "datos demasiado grandes para la dmem")
     return build_load_packet(CMD_LOAD_DATA, words)
 
 
@@ -81,9 +108,32 @@ def build_reset_packet() -> bytes:
     return bytes([CMD_RESET])
 
 
+def build_break_packet() -> bytes:
+    return bytes([CMD_BREAK])
+
+
 # =============================================================================
 # Volcado de estado (FPGA -> Host)
 # =============================================================================
+@dataclass
+class StageIf:
+    """Etapa IF: no es un latch, es el PC actual y la instruccion que imem
+    devuelve para el (la que entra a IF/ID en el proximo flanco, salvo
+    stall o flush)."""
+    pc: int
+    instr: int
+
+
+@dataclass
+class Forwarding:
+    """Selecciones de los muxes de forwarding en el ciclo del volcado.
+    Las de ID se calculan siempre, pero solo las usa un branch/jalr."""
+    a_ex: int  # FWD_EX_*
+    b_ex: int
+    a_id: int  # FWD_ID_*
+    b_id: int
+
+
 @dataclass
 class LatchIfId:
     pc: int
@@ -134,8 +184,11 @@ class LatchMemWb:
 class DumpState:
     core_halted: bool
     branch_taken: bool
-    stalled: bool
+    stalled: bool       # el PC no avanza: stall de datos o HALT en ID
+    hazard_stall: bool  # el stall es por un riesgo de datos (burbuja en ID/EX)
+    forwarding: Forwarding
     cycle_count: int
+    if_stage: StageIf
     if_id: LatchIfId
     id_ex: LatchIdEx
     ex_mem: LatchExMem
@@ -174,7 +227,12 @@ def parse_dump(raw: bytes, dmem_words: int) -> DumpState:
     core_halted = bool(status & 0x1)
     branch_taken = bool(status & 0x2)
     stalled = bool(status & 0x4)
+    hazard_stall = bool(status & 0x8)
+    fwd = (status >> 8) & 0xFF
+    forwarding = Forwarding(a_ex=fwd & 3, b_ex=(fwd >> 2) & 3,
+                            a_id=(fwd >> 4) & 3, b_id=(fwd >> 6) & 3)
     cycle_count = words[2]
+    if_stage = StageIf(pc=words[IF_WORD], instr=words[IF_WORD + 1])
 
     if_id = LatchIfId(pc=words[3], instr=words[4])
 
@@ -207,6 +265,8 @@ def parse_dump(raw: bytes, dmem_words: int) -> DumpState:
 
     return DumpState(
         core_halted=core_halted, branch_taken=branch_taken, stalled=stalled,
-        cycle_count=cycle_count, if_id=if_id, id_ex=id_ex, ex_mem=ex_mem, mem_wb=mem_wb,
+        hazard_stall=hazard_stall, forwarding=forwarding,
+        cycle_count=cycle_count, if_stage=if_stage,
+        if_id=if_id, id_ex=id_ex, ex_mem=ex_mem, mem_wb=mem_wb,
         registers=registers, dmem=dmem,
     )

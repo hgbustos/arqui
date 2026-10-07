@@ -7,11 +7,14 @@
 // branch en sus dos variantes (load en EX / load en MEM), que ese chequeo
 // NO dispara para un consumidor que no es branch/jalr, branch tomado sin
 // hazard (flush), la prioridad stall-sobre-flush cuando ambos coinciden,
-// halt (freeze sin burbuja) y que rd=0 nunca genera hazard.
+// halt (freeze sin burbuja), que rd=0 nunca genera hazard, y que un campo
+// rs1/rs2 que la instrucción en ID no lee (uses_rs*=0, p.ej. el inmediato
+// de un I-type) no genera un stall espurio.
 // =============================================================================
 module tb_hazard_unit;
 
     reg  [4:0] tb_id_rs1, tb_id_rs2;
+    reg        tb_id_uses_rs1, tb_id_uses_rs2;
     reg        tb_id_is_branch, tb_id_is_jalr, tb_id_is_halt;
     reg  [4:0] tb_idex_rd;
     reg        tb_idex_memread;
@@ -26,6 +29,8 @@ module tb_hazard_unit;
     hazard_unit uut (
         .id_rs1_addr_i     (tb_id_rs1),
         .id_rs2_addr_i     (tb_id_rs2),
+        .id_uses_rs1_i     (tb_id_uses_rs1),
+        .id_uses_rs2_i     (tb_id_uses_rs2),
         .id_is_branch_i    (tb_id_is_branch),
         .id_is_jalr_i      (tb_id_is_jalr),
         .id_is_halt_i      (tb_id_is_halt),
@@ -66,6 +71,7 @@ module tb_hazard_unit;
 
         // Defaults: nada en vuelo, nada pide nada.
         tb_id_rs1 = 5'd1; tb_id_rs2 = 5'd2;
+        tb_id_uses_rs1 = 1; tb_id_uses_rs2 = 1; // p.ej. un R-type: lee los dos
         tb_id_is_branch = 0; tb_id_is_jalr = 0; tb_id_is_halt = 0;
         tb_idex_rd = 5'd9; tb_idex_memread = 0;
         tb_exmem_rd = 5'd10; tb_exmem_memread = 0;
@@ -76,6 +82,17 @@ module tb_hazard_unit;
         $display("\n--- Load-use clasico ---");
         tb_idex_rd = 5'd1; tb_idex_memread = 1; // EX es un load, rd=x1=rs1@ID
         check("Load-use (consumidor generico) -> stall", 1'b0, 1'b0, 1'b0, 1'b1);
+        tb_idex_rd = 5'd9; tb_idex_memread = 0;
+
+        $display("\n--- Load-use: sólo cuenta un registro que ID lee de verdad ---");
+        tb_idex_rd = 5'd2; tb_idex_memread = 1; // rd del load = campo rs2 de ID
+        tb_id_uses_rs2 = 0;                      // ...pero ID es un I-type: ese campo es inmediato
+        check("rd del load = campo rs2 de un I-type -> NO stall", 1'b1, 1'b1, 1'b0, 1'b0);
+        tb_id_uses_rs2 = 1;
+        check("Mismo caso si ID si lee rs2 (R-type) -> stall", 1'b0, 1'b0, 1'b0, 1'b1);
+        tb_idex_rd = 5'd1; tb_id_uses_rs1 = 0;   // lui/jal: ni siquiera rs1 es registro
+        check("rd del load = campo rs1 de un lui/jal -> NO stall", 1'b1, 1'b1, 1'b0, 1'b0);
+        tb_id_uses_rs1 = 1;
         tb_idex_rd = 5'd9; tb_idex_memread = 0;
 
         $display("\n--- Load-use no dispara si rd=x0 ---");
@@ -99,6 +116,12 @@ module tb_hazard_unit;
         tb_exmem_rd = 5'd2; tb_exmem_memread = 1; // mismo load en MEM, pero ID no es branch/jalr
         check("Load en EX/MEM, consumidor generico -> NO stall", 1'b1, 1'b1, 1'b0, 1'b0);
         tb_exmem_rd = 5'd10; tb_exmem_memread = 0;
+
+        $display("\n--- jalr no lee rs2: un load en MEM sobre ese campo no lo frena ---");
+        tb_id_is_branch = 0; tb_id_is_jalr = 1; tb_id_uses_rs2 = 0;
+        tb_exmem_rd = 5'd2; tb_exmem_memread = 1; // rd del load = campo rs2 (inmediato) de jalr
+        check("Load en EX/MEM sobre el campo rs2 de jalr -> NO stall", 1'b1, 1'b1, 1'b0, 1'b0);
+        tb_exmem_rd = 5'd10; tb_exmem_memread = 0; tb_id_is_jalr = 0; tb_id_uses_rs2 = 1;
 
         $display("\n--- jalr tambien protegido (no solo branch) ---");
         tb_id_is_jalr = 1;

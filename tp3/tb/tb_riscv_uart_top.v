@@ -13,8 +13,11 @@
 // TP2, sin modificar) + debug_unit + dump_unit + riscv_core. El objetivo
 // es validar el cableado de riscv_uart_top.v y el protocolo de extremo a
 // extremo -- la lógica interna de cada pieza ya se verificó por separado
-// (201 tests de riscv_core.v en Fase 1, 29 de debug_unit.v y 58 de
-// dump_unit.v en Fase 2).
+// (testbenches de rtl/core/, tb_debug_unit.v y tb_dump_unit.v). Cubre la
+// carga de un programa, CMD_RUN hasta HALT, CMD_STEP sobre un core
+// detenido, y un loop infinito: CMD_RUN no termina solo, CMD_BREAK lo
+// pausa, un CMD_STEP posterior avanza exactamente 1 ciclo y otro CMD_RUN
+// continúa desde donde quedó.
 //
 // Usa una base de tiempos artificialmente rápida (CLK_FREQ/BAUD_RATE1
 // chicos, MOD_VALUE=4) y una dmem chica (4 palabras) sólo para que la
@@ -26,9 +29,10 @@ module tb_riscv_uart_top;
     localparam [7:0] CMD_LOAD_PROG = 8'h10;
     localparam [7:0] CMD_RUN       = 8'h20;
     localparam [7:0] CMD_STEP      = 8'h21;
+    localparam [7:0] CMD_BREAK     = 8'h24;
 
     localparam DMEM_WORDS  = 4;
-    localparam FIXED_WORDS = 53;
+    localparam FIXED_WORDS = 55;
     localparam TOTAL_WORDS = FIXED_WORDS + DMEM_WORDS;
 
     // Base de tiempos de simulación: MOD_VALUE = CLK_FREQ/(BAUD*16) = 5.
@@ -153,10 +157,30 @@ module tb_riscv_uart_top;
         end
     endtask
 
+    task check_true;
+        input [511:0] label;
+        input         cond;
+        begin
+            if (cond === 1'b1) begin
+                pass_count = pass_count + 1;
+                $display("  -> EXITO | %0s", label);
+            end else begin
+                fail_count = fail_count + 1;
+                $error("  -> FALLO | %0s", label);
+            end
+        end
+    endtask
+
+    // Detecta cualquier actividad en 'tx_o' (un bit de start = flanco de
+    // bajada): sirve para confirmar que NO empezó un volcado.
+    reg tx_activity;
+    always @(negedge tb_tx) tx_activity = 1'b1;
+
     // ------------------------------------------------------------------
     // Programa de prueba
     // ------------------------------------------------------------------
     reg [31:0] prog [0:4];
+    reg [31:0] x5_paused, cycles_paused;
 
     initial begin
         $display("========================================");
@@ -205,13 +229,16 @@ module tb_riscv_uart_top;
         check32("x2 = 32",                    dump_words[21+2], 32'd32);
         check32("x3 = 42 (10+32)",            dump_words[21+3], 32'd42);
         check32("dmem[0] = 42 (sw x3,0(x0))", dump_words[FIXED_WORDS+0], 32'd42);
-        if (dump_words[2] !== 32'd0) begin
-            pass_count = pass_count + 1;
-            $display("  -> EXITO | CYCLE_COUNT > 0: %0d ciclos", dump_words[2]);
-        end else begin
-            fail_count = fail_count + 1;
-            $error("  -> FALLO | CYCLE_COUNT deberia ser mayor a 0");
-        end
+        // 5 instrucciones sin stalls: el HALT (indice 4) entra a IF/ID en el
+        // ciclo 5 y llega a WB 3 ciclos despues. La Debug Unit congela el
+        // core en ese mismo ciclo, sin dejarlo avanzar uno de mas.
+        check32("CYCLE_COUNT exacto: HALT en WB en el ciclo 8", dump_words[2], 32'd8);
+        // Etapa IF y bits nuevos de STATUS: con el HALT retenido en IF/ID
+        // el PC quedo congelado en HALT+4, que imem lee como 0 (vacia).
+        check32("IF.pc = HALT+4 (palabra 53)",            dump_words[53], 32'h14);
+        check32("IF.instr = imem vacia (palabra 54)",     dump_words[54], 32'h0);
+        check32("STATUS: stalled por HALT, no por datos", dump_words[1] & 32'hC, 32'h4);
+        check32("STATUS: sin forwarding (todo el pipeline es HALT)", (dump_words[1] >> 8) & 32'hFF, 32'h0);
 
         $display("\n===== CMD_STEP por UART real (no debe cambiar nada, core ya detenido) =====");
         fork
@@ -220,6 +247,47 @@ module tb_riscv_uart_top;
         join
         check32("STATUS sigue en halted tras CMD_STEP sobre core detenido", dump_words[1] & 32'h1, 32'h1);
         check32("x3 sigue en 42 (nada avanzo)", dump_words[21+3], 32'd42);
+        check32("CYCLE_COUNT no cambia (STEP sobre un core detenido es un no-op)", dump_words[2], 32'd8);
+
+        $display("\n===== Loop infinito: CMD_RUN no termina solo, CMD_BREAK lo pausa =====");
+        // addi x5,x0,0 / loop: addi x5,x5,1 / jal x0,loop. Nunca llega a un
+        // HALT: ni siquiera al implicito de la addr 12, porque el jal tomado
+        // descarta (flush) esa instruccion cada vez que se la busca.
+        prog[0] = i_addi(5, 0, 0);
+        prog[1] = i_addi(5, 5, 1);
+        prog[2] = i_jal (0, -21'sd4);
+        send_uart_byte(CMD_LOAD_PROG);
+        send_uart_byte(8'd3); send_uart_byte(8'd0); // N=3
+        send_word_le(prog[0]);
+        send_word_le(prog[1]);
+        send_word_le(prog[2]);
+        send_uart_byte(CMD_RUN);
+        tx_activity = 1'b0;
+        #(BIT_TIME * 40);
+        check_true("RUN sobre un loop: no hay volcado espontaneo", tx_activity === 1'b0);
+        fork
+            send_uart_byte(CMD_BREAK);
+            recv_dump;
+        join
+        check32("pausa: STATUS core_halted=0 (fue pausa, no HALT)", dump_words[1] & 32'h1, 32'h0);
+        check_true("pausa: el loop corrio (x5 > 0)", dump_words[21+5] > 0);
+        x5_paused     = dump_words[21+5];
+        cycles_paused = dump_words[2];
+
+        $display("\n===== Tras la pausa: STEP avanza 1 ciclo, RUN continua =====");
+        fork
+            send_uart_byte(CMD_STEP);
+            recv_dump;
+        join
+        check32("STEP tras la pausa: CYCLE_COUNT avanza exactamente 1", dump_words[2], cycles_paused + 1);
+        send_uart_byte(CMD_RUN);
+        #(BIT_TIME * 20);
+        fork
+            send_uart_byte(CMD_BREAK);
+            recv_dump;
+        join
+        check_true("RUN tras la pausa continua (x5 sigue creciendo)",
+                   dump_words[21+5] > x5_paused);
 
         $display("\n========================================");
         $display("Resultado: %0d EXITO / %0d FALLO", pass_count, fail_count);
@@ -231,7 +299,7 @@ module tb_riscv_uart_top;
 
     // Salvavidas de simulacion: si algo se traba, cortar en vez de colgar.
     initial begin
-        #(BIT_TIME * 10 * (TOTAL_WORDS*4 + 30) * 3);
+        #(BIT_TIME * 10 * (TOTAL_WORDS*4 + 30) * 8); // ~5 volcados + cargas + esperas
         $display("TIMEOUT: la simulacion no termino a tiempo");
         $finish;
     end

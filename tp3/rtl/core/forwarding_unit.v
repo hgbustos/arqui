@@ -4,18 +4,25 @@
 // Descripción:
 // Detecta dependencias RAW y decide, para cada operando, si hay que
 // adelantar un valor que todavía no llegó al banco de registros. Cubre DOS
-// puntos de adelantamiento distintos, ambos necesarios por haber elegido
-// resolver los saltos en ID (Patterson 4.8):
+// puntos de adelantamiento distintos:
 //
-//   - Hacia EX (el caso clásico de 4.7): los operandos de la ALU en EX
-//     pueden venir del banco de registros, de EX/MEM o de MEM/WB.
-//     Prioridad EX/MEM > MEM/WB (el productor más reciente gana).
-//   - Hacia ID (necesario porque branch_unit compara ahí mismo): los
-//     operandos del comparador de saltos pueden venir del banco de
-//     registros, de la salida combinacional *actual* de EX (la instrucción
+//   - Hacia EX (el caso clásico de Patterson 4.7): los operandos de la
+//     ALU en EX pueden venir del banco de registros, de EX/MEM o de
+//     MEM/WB. Prioridad EX/MEM > MEM/WB (el productor más reciente gana).
+//   - Hacia ID (necesario porque branch_unit compara ahí mismo, por
+//     resolver los saltos en ID): los operandos del comparador de saltos
+//     pueden venir del banco de registros, de EX/MEM, de MEM/WB y, además,
+//     de la salida combinacional *actual* de EX (la instrucción
 //     inmediatamente anterior al salto, si ya tiene un resultado listo
-//     este mismo ciclo), de EX/MEM o de MEM/WB. Prioridad EX > EX/MEM >
-//     MEM/WB.
+//     este mismo ciclo). Prioridad EX > EX/MEM > MEM/WB.
+//
+//     Esa última fuente es una decisión propia, no la versión del libro
+//     (Patterson 4.8 adelanta a ID sólo desde EX/MEM y MEM/WB, y frena 1
+//     ciclo si la instrucción anterior es de ALU). Ahorra ese stall --
+//     típico del cierre de un loop, 'addi' + 'bne' -- a costa de poner la
+//     ALU y el comparador en serie en un mismo ciclo, que es el camino
+//     crítico del diseño: se prioriza el CPI por sobre la frecuencia de
+//     clock. Justificación completa en tp3/informe.md §3.1 y §3.8.
 //
 // Importante: esta unidad decide DE DÓNDE viene el valor asumiendo que el
 // valor ya está disponible. El caso en que NO está disponible todavía

@@ -22,16 +22,30 @@ Un byte, primero de cada transacción.
 |---|---|---|
 | `CMD_LOAD_PROG` | `0x10` | Carga un programa nuevo en `imem`. Ver framing abajo. Dispara soft-reset + limpieza completa de `imem`. No responde nada. |
 | `CMD_LOAD_DATA` | `0x11` | Carga datos iniciales en `dmem`. Mismo framing y mismo soft-reset, pero limpia y escribe `dmem` en vez de `imem`. No responde nada. |
-| `CMD_RUN` | `0x20` | Modo continuo: libera el pipeline hasta que el core se detiene (HALT explícito o implícito) y dispara un volcado completo. |
-| `CMD_STEP` | `0x21` | Modo paso a paso: libera el núcleo exactamente 1 ciclo de reloj y dispara un volcado completo. Fuera de ese ciclo el núcleo entero está congelado (ver abajo). |
+| `CMD_RUN` | `0x20` | Modo continuo: libera el pipeline hasta que el core se detiene (HALT explícito o implícito) **o hasta que llega una pausa** (ver abajo), y dispara un volcado completo. |
+| `CMD_STEP` | `0x21` | Modo paso a paso: libera el núcleo exactamente 1 ciclo de reloj (ninguno si ya llegó a HALT) y dispara un volcado completo. Fuera de ese ciclo el núcleo entero está congelado (ver abajo). |
 | `CMD_DUMP` | `0x22` | Dispara un volcado completo sin avanzar la ejecución (para ver el estado recién cargado, por ejemplo). |
 | `CMD_RESET` | `0x23` | Soft-reset manual (PC, banco de registros, los 4 latches de pipeline) sin tocar `imem`/`dmem`. No responde nada. |
+| `CMD_BREAK` | `0x24` | Pausa de un `CMD_RUN` en curso (ver abajo). Fuera de un `CMD_RUN` es un comando desconocido: se descarta. |
 | cualquier otro | — | Se descarta (se consume el byte, sin efecto), igual que en `alu_link.v`. |
 
-`CMD_RUN`/`CMD_STEP` sobre un core ya detenido son un no-op seguro: la
-condición de halt frena `PC`/`IF-ID` sin importar `global_stall_i` (ver
-`hazard_unit.v`), así que "correr" o "step-ear" un core ya parado sólo
-vuelve a disparar el mismo volcado, sin ejecutar nada nuevo.
+**Pausa de `CMD_RUN`.** Un programa que nunca llega a un HALT (por
+ejemplo, un loop infinito) no terminaría nunca el modo continuo. Por eso,
+mientras se ejecuta un `CMD_RUN`, **cualquier** byte que llegue detiene el
+núcleo: el byte se consume y se descarta, y se dispara el volcado
+normal, con `core_halted=0` en el STATUS (así el host distingue una pausa
+de un HALT). El host manda `CMD_BREAK` por convención: si la pausa llega
+tarde (el core ya había llegado a HALT), ese byte cae fuera de `CMD_RUN`
+y se descarta como comando desconocido, sin efecto. Después de una pausa
+se puede seguir con `CMD_STEP`, o con otro `CMD_RUN`, que continúa desde
+donde quedó.
+
+`CMD_RUN`/`CMD_STEP` sobre un core ya detenido (HALT en WB) son un no-op:
+la Debug Unit no libera `global_stall_i` si `core_halted=1`, así que
+"correr" o "step-ear" un core ya parado sólo vuelve a disparar el mismo
+volcado, idéntico al anterior (incluido `CYCLE_COUNT`). Por el mismo
+motivo, `CMD_RUN` congela el núcleo en el mismo ciclo en que el HALT llega
+a WB, sin dejarlo avanzar uno de más.
 
 **Congelamiento entre comandos.** Mientras la Debug Unit no está en
 `CMD_RUN` ni en el ciclo de un `CMD_STEP`, sostiene `global_stall_i=1`, que
@@ -71,7 +85,7 @@ computadora real no borra la RAM sola al reiniciar).
 
 ## Volcado de estado (FPGA → Host)
 
-Disparado siempre por `CMD_RUN` (al terminar), `CMD_STEP` (tras el ciclo) o
+Disparado siempre por `CMD_RUN` (al llegar a HALT o al recibir una pausa), `CMD_STEP` (tras el ciclo) o
 `CMD_DUMP` (inmediato). Es la MISMA estructura en los tres casos: una
 secuencia de palabras de 32 bits, cada una en 4 bytes little-endian, en
 este orden exacto.
@@ -79,14 +93,19 @@ este orden exacto.
 | # palabra | Contenido | Detalle |
 |---|---|---|
 | 0 | `SYNC` | `0xAA55AA55` fijo — marca de sincronismo para que el host se pueda recuperar si perdió un byte. |
-| 1 | `STATUS` | bit0=`core_halted`, bit1=`branch_taken`, bit2=`stalled` (el pipeline frena el PC por un hazard o por un HALT en ID; **no** incluye el congelamiento de la Debug Unit, que está presente en todo volcado), resto en 0. |
-| 2 | `CYCLE_COUNT` | Ciclos **ejecutados** desde el último reset/soft-reset: cuenta sólo los ciclos en que el núcleo avanzó (incluidos stalls de hazard y drenaje tras HALT), no los ciclos congelados entre comandos. Tras `N` `CMD_STEP` vale `N`. |
+| 1 | `STATUS` | bit0=`core_halted`, bit1=`branch_taken`, bit2=`stalled` (el pipeline frena el PC por un hazard o por un HALT en ID; **no** incluye el congelamiento de la Debug Unit, que está presente en todo volcado), bit3=`hazard_stall` (el stall es por un riesgo de datos y entra una burbuja a EX; `stalled` sin este bit = HALT en ID), bits 15:8 = selecciones de forwarding del ciclo (ver abajo), resto en 0. |
+| 2 | `CYCLE_COUNT` | Ciclos **ejecutados** desde el último reset/soft-reset: cuenta sólo los ciclos en que el núcleo avanzó (incluidos stalls de hazard y el drenaje del HALT desde ID hasta WB), no los ciclos congelados entre comandos. Tras `N` `CMD_STEP` vale `N`; tras un `CMD_RUN` que termina en HALT, es exactamente el ciclo en que el HALT llegó a WB. |
 | 3–4 | IF/ID | `pc`, `instr` |
 | 5–10 | ID/EX | `pc`, `instr`, `rs1_data`, `rs2_data`, `imm`, `control` |
 | 11–15 | EX/MEM | `pc`, `instr`, `ex_result`, `rs2_data`, `control` |
 | 16–20 | MEM/WB | `pc`, `instr`, `result`, `mem_read_data`, `control` |
 | 21–52 | Registros | `x0`..`x31`, 32 palabras en orden |
-| 53–(53+D−1) | `dmem` | `dmem[0]`..`dmem[D-1]` completa (`D` = `DMEM_DEPTH_WORDS`) |
+| 53–54 | IF | `pc` (el PC actual) e `instr` (lo que `imem` devuelve para ese PC: la instrucción que entra a IF/ID en el próximo flanco, salvo stall o flush) |
+| 55–(55+D−1) | `dmem` | `dmem[0]`..`dmem[D-1]` completa (`D` = `DMEM_DEPTH_WORDS`) |
+
+La etapa IF no es un latch (el enunciado pide los latches), pero sin ella
+la GUI no puede dibujar las 5 etapas. Se agregó al final del bloque fijo,
+no antes de IF/ID, para no mover ningún índice que ya existía.
 
 Cada campo `control` empaqueta las señales de control de esa etapa en los
 bits bajos (resto en 0) — un campo por instrucción, no un bit aparte por
@@ -98,6 +117,22 @@ de 32 bits", nunca bit-packing fino que complique al parser del host):
 | ID/EX | reg_write | mem_read | mem_write | mem_to_reg | is_jal | is_jalr | is_halt |
 | EX/MEM | reg_write | mem_read | mem_write | mem_to_reg | is_halt | — | — |
 | MEM/WB | reg_write | mem_to_reg | is_halt | — | — | — | — |
+
+**Selecciones de forwarding** (`STATUS[15:8]`): lo que eligió cada mux de
+`forwarding_unit.v` en el ciclo del volcado, para que el host muestre lo
+que decidió el hardware en vez de recalcularlo.
+
+| Bits | Mux | 0 | 1 | 2 | 3 |
+|---|---|---|---|---|---|
+| 9:8 | operando A de la ALU (EX) | banco (ID/EX) | EX/MEM | MEM/WB | — |
+| 11:10 | operando B de la ALU / dato del store (EX) | banco (ID/EX) | EX/MEM | MEM/WB | — |
+| 13:12 | rs1 del comparador de saltos (ID) | banco | salida actual de EX | EX/MEM | MEM/WB |
+| 15:14 | rs2 del comparador de saltos (ID) | banco | salida actual de EX | EX/MEM | MEM/WB |
+
+Las selecciones de ID se calculan siempre, pero sólo las usa un
+`beq`/`bne`/`jalr`; con `hazard_stall=1`, `branch_taken` puede valer 1 con
+un dato todavía viejo (el load no llegó), y no tiene efecto: el stall
+bloquea el PC y el flush.
 
 `ex_result` (EX/MEM) y `result` (MEM/WB) ya son el valor final resuelto
 (salida de la ALU, o PC+4 si la instrucción era jal/jalr — ese mux se
@@ -111,7 +146,7 @@ falta rastrear qué cambió, ni tener dos formatos de paquete distintos según
 el modo. El costo es tamaño: con el `DMEM_DEPTH_WORDS` que usa
 `riscv_uart_top.v` (256 palabras = 1KB, deliberadamente chico frente al
 default de 1024 de `riscv_core.v` — ver ese archivo), el volcado pesa
-`(53 + 256) × 4 = 1236` bytes. A 115200 baudios (~11.5 KB/s) son ~107ms por
+`(55 + 256) × 4 = 1244` bytes. A 115200 baudios (~11.5 KB/s) son ~108ms por
 volcado — aceptable para un paso a paso interactivo. Con el default de 1024
 palabras hubiese sido ~4.3KB (~375ms), notoriamente más lento; se
 documenta como la alternativa considerada y por qué se prefirió una `dmem`
@@ -124,7 +159,7 @@ complejo.
 |---|---|
 | `CMD_LOAD_PROG` / `CMD_LOAD_DATA` / `CMD_RESET` | Ninguna. |
 | `CMD_RUN` / `CMD_STEP` / `CMD_DUMP` | Un volcado completo (ver arriba). |
+| `CMD_BREAK` | Ninguna propia: el volcado lo produce el `CMD_RUN` que interrumpe. |
 
-No hay eco del byte de comando (a diferencia de otros diseños de
-referencia consultados sólo para calibrar alcance): innecesario acá porque
-el propio volcado, o su ausencia, ya le confirma al host qué pasó.
+No hay eco del byte de comando: es innecesario, porque el propio volcado,
+o su ausencia, ya le confirma al host qué pasó.

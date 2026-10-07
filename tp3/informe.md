@@ -23,7 +23,7 @@ Bustos Hugo Gabriel - -
    5. [Bypass de escritura-lectura del banco de registros](#35-bypass-de-escritura-lectura-del-banco-de-registros)
    6. [Memorias de lectura asíncrona, no Block RAM](#36-memorias-de-lectura-asíncrona-no-block-ram)
    7. [Volcado completo, no diferencial](#37-volcado-completo-no-diferencial)
-   8. [El clock: sin gating, frecuencia pendiente de la Fase 4](#38-el-clock-sin-gating-frecuencia-pendiente-de-la-fase-4)
+   8. [El clock: sin gating, camino crítico medido, Clock Wizard pendiente de aplicar](#38-el-clock-sin-gating-camino-crítico-medido-clock-wizard-pendiente-de-aplicar)
    9. [Paso a paso: congelamiento total del núcleo](#39-paso-a-paso-congelamiento-total-del-núcleo)
 4. [Verificación](#4-verificación)
 5. [Herramientas de host](#5-herramientas-de-host)
@@ -46,11 +46,7 @@ EX, y la capa UART completa de TP2 (`baud_generator.v`, `uart_rx.v`,
 `uart_tx.v`, `uart_interface.v`) se reutiliza sin modificar como capa de
 transporte de la Debug Unit.
 
-Consigna completa: `tp3/docs/TRABAJO FINAL 2025.pptx.pdf`. Se usó
-`tp3/referencia/` (la entrega ya aprobada de un compañero de una cursada
-anterior) únicamente para calibrar el alcance esperado antes de diseñar
-— se leyó su documentación, no su código — siguiendo al pie de la letra
-el pedido explícito del propio enunciado: *"No copien, inspírense"*.
+Consigna completa: `tp3/docs/TRABAJO FINAL 2025.pptx.pdf`.
 
 ## 2. Arquitectura general
 
@@ -91,6 +87,7 @@ tp3/
 | `host/riscv_asm.py` | Ensamblador + desensamblador del subset de RV32I pedido |
 | `host/riscv_protocol.py` | Framing del protocolo, sin E/S (reutilizado por CLI y GUI) |
 | `host/riscv_client.py` | Cliente de línea de comandos |
+| `host/riscv_pipeview.py` | Interpreta un volcado: qué hay en cada etapa, forwarding, stalls, diagrama multiciclo (sin E/S ni tkinter) |
 | `host/riscv_gui.py` | GUI de escritorio (tkinter) |
 
 `tp1/ALU.v` se extendió in-place (aditivo, no se tocó ningún opcode
@@ -151,6 +148,35 @@ EX/MEM es PC+4 (el valor de enlace), no la salida de la ALU.
 **Memoria:** `imem`/`dmem` son de lectura asíncrona (combinacional), no
 síncrona como preferiría inferir Vivado para Block RAM — ver §3.6.
 
+**Accesos desalineados y fuera de rango.** El enunciado no pide
+excepciones y el diseño no las tiene, pero qué pasa en estos casos está
+definido:
+
+- **Desalineados:** se ignoran los bits bajos de la dirección que
+  harían falta para alinear el acceso, y se usa la palabra o media
+  palabra alineada que contiene esa dirección. Un `lw`/`sw` a `0x6`
+  accede a la palabra de `0x4`; un `lh`/`lhu`/`sh` a `0x3` accede a la
+  media palabra de `0x2`. Los accesos de un byte siempre están
+  alineados. Un RISC-V completo tendría que resolver el acceso
+  desalineado bien o generar una excepción; acá no hay excepciones, y
+  los programas de este TP usan direcciones alineadas.
+- **Destinos de salto no múltiplos de 4:** `jalr` sólo fuerza a 0 el
+  bit 0 del destino (así lo define la especificación) y los offsets de
+  `beq`/`bne`/`jal` sólo tienen que ser pares, así que un destino con
+  el bit 1 en 1 es posible: con `jalr`, según el valor de `rs1` en
+  ejecución; con un salto, si se escribe un offset numérico como `6`
+  (con etiquetas, el ensamblador siempre calcula múltiplos de 4). `imem`
+  también ignora los bits `[1:0]` del PC, así que se ejecuta la palabra
+  alineada que contiene esa dirección, y el PC (y con él los valores de
+  enlace de `jal`/`jalr`) sigue corrido en 2. Un RISC-V completo
+  generaría una excepción de dirección de instrucción desalineada.
+- **Fuera de rango:** cada memoria usa sólo los bits de dirección que
+  necesita (`imem` de 1024 palabras usa los bits `[11:2]`; la `dmem` de
+  256 palabras del top, los bits `[9:2]`). Una dirección más allá del
+  tamaño se pliega sobre el principio: en la `dmem` de 256 palabras, un
+  `lw` a `0x400` lee la palabra 0. Para la carga por UART, el host
+  valida el tamaño antes de mandar nada (§5).
+
 ### 2.3 Riesgos (hazards)
 
 El enunciado pide tratar los 3 tipos clásicos (Patterson 4.5, p.262):
@@ -158,7 +184,7 @@ El enunciado pide tratar los 3 tipos clásicos (Patterson 4.5, p.262):
 | Tipo | ¿Aparece acá? | Resolución |
 |---|---|---|
 | Estructural | No — ver §3.4 | — |
-| De datos | Sí | `forwarding_unit.v`: adelantamiento hacia EX (Patterson 4.7, p.294, prioridad EX/MEM > MEM/WB) **y** hacia ID (necesario por resolver saltos ahí, prioridad EX > EX/MEM > MEM/WB) |
+| De datos | Sí | `forwarding_unit.v`: adelantamiento hacia EX (Patterson 4.7, p.294, prioridad EX/MEM > MEM/WB) **y** hacia ID (necesario por resolver saltos ahí; incluye adelantar el resultado de la ALU del mismo ciclo, decisión propia explicada en §3.1, prioridad EX > EX/MEM > MEM/WB) |
 | De control | Sí | Saltos resueltos en ID (Patterson 4.8, p.307, fig. 4.62) → 1 burbuja por salto tomado, en vez de 2 |
 
 Casos particulares de riesgo de datos que necesitan detener el pipeline
@@ -167,7 +193,16 @@ Casos particulares de riesgo de datos que necesitan detener el pipeline
 - **Load-use clásico**: un consumidor genérico en ID necesita el
   resultado de un load que todavía está en EX (su dato recién está
   disponible al final de MEM). `hazard_unit.v` lo detecta y congela
-  PC/IF-ID por 1 ciclo, burbujeando ID/EX.
+  PC/IF-ID por 1 ciclo, burbujeando ID/EX. Sólo cuenta como dependencia
+  un registro que la instrucción en ID **lee de verdad**
+  (`uses_rs1`/`uses_rs2`, que arma `control_unit.v`): los campos
+  `rs1`/`rs2` están en la misma posición en toda instrucción, pero en un
+  I-type los bits de `rs2` son el inmediato, y en `lui`/`jal` también los
+  de `rs1`. Antes se comparaban los campos crudos y, por ejemplo,
+  `lw x5,0(x0)` seguido de `addi x6,x2,5` frenaba un ciclo sin ninguna
+  dependencia (`imm[4:0]`=5 coincidía con `rd`=x5). El resultado era
+  correcto, pero ese ciclo de más se veía en `CYCLE_COUNT` y en el modo
+  paso a paso. Se corrigió en la revisión previa a la defensa.
 - **Load justo antes de un branch/jalr**: propio de haber elegido
   resolver saltos en ID. Ni el adelantamiento desde EX (la ALU todavía no
   tiene el dato) ni desde EX/MEM (para un load, ese latch sólo tiene la
@@ -201,10 +236,12 @@ respuesta (un volcado completo del estado).
 
 El volcado (siempre la misma estructura, sin importar qué lo disparó) es
 una secuencia de palabras de 32 bits en little-endian: una marca de
-sincronismo, estado (`halted`/`stalled`/`branch_taken`) y contador de
-ciclos, los 4 latches de pipeline completos (con sus señales de control
-empaquetadas en una palabra por latch), los 32 registros, y finalmente
-toda la memoria de datos.
+sincronismo, estado (`halted`/`stalled`/`branch_taken`, si el stall es
+por un riesgo de datos, y qué eligió cada mux de forwarding) y contador
+de ciclos, los 4 latches de pipeline completos (con sus señales de
+control empaquetadas en una palabra por latch), los 32 registros, la
+etapa IF (el PC y la instrucción que se está buscando), y finalmente toda
+la memoria de datos.
 
 ```mermaid
 sequenceDiagram
@@ -264,14 +301,74 @@ mueve la resolución a ID agregando un comparador dedicado —reduce la
 penalización de un salto tomado de 2 burbujas a 1, al costo de forwarding
 adicional hacia una etapa más temprana.
 
-**Se optó por resolver en ID** (`branch_unit.v`), la variante más fiel al
-cierre que el propio libro le da al tema, no la más simple. El costo
-concreto: `forwarding_unit.v` necesita una segunda pista de
-adelantamiento (hacia ID, con prioridad EX > EX/MEM > MEM/WB, ver §2.3) y
+**Se optó por resolver en ID** (`branch_unit.v`), la mejora que el libro
+presenta sobre la versión básica. El costo concreto: `forwarding_unit.v`
+necesita una segunda pista de adelantamiento (hacia ID, ver §2.3) y
 `hazard_unit.v` necesita el caso extendido de "load antes de un branch"
-que no existiría si los saltos se resolvieran en EX. A cambio, cualquier
-programa con saltos corre con un tercio menos de burbujas por salto
-tomado que la alternativa simple.
+que no existiría si los saltos se resolvieran en EX. A cambio, cada salto
+tomado cuesta la mitad de burbujas que en la alternativa simple (1 en vez
+de 2).
+
+**Decisión propia: adelantar a ID el resultado de la ALU del mismo
+ciclo.** En la versión del libro, los operandos del comparador en ID
+pueden venir sólo de EX/MEM o de MEM/WB. Si la instrucción
+*inmediatamente anterior* al salto es una operación de ALU que produce
+uno de sus operandos, el libro inserta 1 ciclo de stall, porque ese
+resultado todavía no llegó a ningún latch (con un load, 2 ciclos). Este
+diseño agrega una tercera fuente: la salida combinacional de EX en el
+mismo ciclo, con prioridad EX > EX/MEM > MEM/WB. Así ese caso no paga
+ningún stall. Los loads siguen como en el libro: su dato recién existe al
+final de MEM, y no hay forma de adelantarlo antes.
+
+Es una decisión deliberada de **priorizar el CPI por sobre la frecuencia
+de clock**:
+
+- **Lo que se gana.** El patrón "operación de ALU seguida de un salto que
+  depende de ella" es justamente como termina casi cualquier loop
+  (`addi x1, x1, 1` seguido de `bne x1, x2, loop`). Con la variante del
+  libro, cada iteración de un loop así pagaría 1 ciclo extra; acá no.
+- **Lo que se paga.** La ALU y el comparador del salto quedan en serie
+  dentro de un mismo ciclo, y ese es exactamente el camino crítico que
+  midió Vivado (§3.8). Para que entre en un ciclo, el clock se baja de
+  100MHz a 50MHz con el Clock Wizard.
+- **Por qué conviene en este sistema.** La frecuencia casi no se nota en
+  el tiempo total: un programa de prueba termina en microsegundos, y
+  cada volcado por UART tarda unos 107ms (§3.7), así que la UART domina
+  por varios órdenes de magnitud. El CPI, en cambio, es una métrica de la
+  microarquitectura que se ve directamente en el `CYCLE_COUNT` de cada
+  volcado.
+
+**Cuánto se gana, medido.** Para cuantificarlo se armó, sólo para esta
+medición, una variante del núcleo idéntica salvo en este punto: sin la
+fuente EX hacia ID, y con 1 ciclo de stall cuando un branch/jalr depende
+de la instrucción que está en EX (lo que hace Patterson 4.8). Se
+corrieron los mismos programas en las dos variantes, en simulación,
+contando ciclos hasta que el HALT llega a WB (lo mismo que reporta
+`CYCLE_COUNT`), y se verificó que el estado final de ambas coincidiera con
+un modelo de referencia del ISA:
+
+| Programa | Instrucciones ejecutadas | Ciclos (este diseño) | CPI | Ciclos (variante del libro) | CPI | Ciclos ahorrados |
+|---|---|---|---|---|---|---|
+| Suma de un arreglo de 16 palabras | 69 | 103 | 1,49 | 119 | 1,72 | 13,4% |
+| Bubble sort de 16 palabras | 899 | 1213 | 1,35 | 1469 | 1,63 | 17,4% |
+| Fibonacci, 30 términos | 185 | 217 | 1,17 | 247 | 1,34 | 12,1% |
+| 200 programas aleatorios | 37328 | 45338 | 1,21 | 48805 | 1,31 | 7,1% |
+
+(El CPI incluye los 3 ciclos de llenado del pipeline y todos los stalls y
+flushes.) La ganancia es mayor justo en los programas con loops, que es
+el caso que motivó la decisión; en los aleatorios es menor porque no
+todos los saltos dependen de la instrucción inmediatamente anterior.
+
+**Lo que esto no dice.** En tiempo absoluto la comparación depende
+también del período: tiempo = instrucciones × CPI × período. Para el
+bubble sort, a 50MHz este diseño tarda 1213 × 20ns ≈ 24,3µs; la variante
+del libro, con 1469 ciclos, empataría a unos 60MHz y sería más rápida si
+cerrara timing por encima de eso, algo probable porque no tiene la ALU en
+serie con el comparador (no se midió en Vivado). La alternativa es
+entonces igual de válida, y probablemente mejor en tiempo de CPU puro; se
+descartó por lo de arriba: en este sistema esa diferencia son
+microsegundos frente a los ~107ms de cada volcado, mientras que el CPI es
+lo que se ve en cada `CYCLE_COUNT`.
 
 ### 3.2 HALT: propia y también implícita
 
@@ -288,21 +385,77 @@ limpia `imem` **completa** antes de escribir el programa nuevo, no sólo
 las palabras que llegaron. Cualquier dirección más allá del programa
 cargado queda en `0x00000000`, que no es un opcode válido de RV32I
 (`0000000` no está asignado a ninguna instrucción). `control_unit.v`
-trata cualquier opcode no reconocido como **HALT implícito** — mismo
-mecanismo, misma consecuencia, que la instrucción explícita. Sin esto, un
-programa sin `halt` correría indefinidamente contra memoria sin
-inicializar.
+trata cualquier instrucción que no esté en el subset pedido como **HALT
+implícito** — mismo mecanismo, misma consecuencia, que la instrucción
+explícita. Sin esto, un programa sin `halt` correría indefinidamente
+contra memoria sin inicializar.
+
+"Que no esté en el subset" se decide con la **codificación completa**
+(opcode, `funct3` y `funct7`), no sólo con el opcode. Esto se corrigió en
+la revisión previa a la defensa: antes sólo se miraba el opcode, y una
+instrucción con un opcode conocido pero que no pide el enunciado se
+ejecutaba como otra. Por ejemplo, `blt` comparte opcode con `beq`/`bne`,
+y `branch_unit.v` distingue a esos dos con el bit 0 de `funct3`: un
+`blt` armado a mano se ejecutaba en silencio como un `beq`. Lo mismo
+pasaba con `mul` (extensión M, se ejecutaba como `add`) o con `ld`
+(RV64, como `lw`). El ensamblador ya rechazaba esos mnemónicos, así que
+sólo se llegaba escribiendo la palabra a mano, pero la regla tiene que
+valer para cualquier palabra que haya en `imem`. Ahora todas esas
+codificaciones frenan el núcleo en el lugar, igual que un opcode
+desconocido (`tb_control_unit.v` y la sección 11 de `tb_riscv_core.v`).
 
 La condición de halt (explícita o implícita) se decodifica en ID y viaja
 por el pipeline como una señal de control más, sin cortar instrucciones
 que ya estaban en vuelo — recién cuando llega a WB se la considera
 "efectiva" para la Debug Unit (`core_halted_o`). Internamente, la
 búsqueda de instrucciones *nuevas* se frena apenas se decodifica el HALT
-(no hace falta esperar a WB para eso): el PC queda apuntando a la propia
-instrucción de HALT, así que IF la vuelve a buscar cada ciclo — la
-condición se auto-sostiene sin necesitar un latch aparte, y es lo que
-hace que la flag de halt termine viéndose en todas las etapas un par de
-ciclos después.
+(no hace falta esperar a WB para eso): IF/ID queda congelado reteniendo
+el HALT, y el PC queda en HALT+4 (la instrucción siguiente, que se busca
+pero nunca entra al pipeline). Como el HALT se sigue decodificando en ID
+cada ciclo, la condición se auto-sostiene sin necesitar un latch aparte.
+Además, como ID/EX sí avanza, cada ciclo entra a EX una nueva copia del
+HALT, y por eso la flag de halt termina viéndose en todas las etapas un
+par de ciclos después.
+
+**"Que el pipeline quede vacío al terminar la ejecución"** (requisito del
+enunciado, para ambos modos). En este diseño significa que, cuando la
+Debug Unit da por terminado el programa (HALT en WB), no queda ninguna
+instrucción del programa a medio ejecutar:
+
+- **Todas las instrucciones anteriores al HALT ya completaron WB.** Si el
+  HALT está en ID en el ciclo *t*, la instrucción inmediatamente anterior
+  está en EX y escribe el banco de registros al final del ciclo *t+2*; el
+  HALT llega a WB recién en *t+3*. Por eso la condición de fin se mira en
+  WB y no apenas se decodifica el HALT.
+- **Ninguna instrucción posterior al HALT llegó a ejecutarse.** PC e IF/ID
+  se congelan en cuanto el HALT entra a ID (la instrucción de HALT+4 se
+  busca pero nunca pasa a ID), y si el HALT venía justo detrás de un salto
+  tomado, el flush de IF/ID lo descarta como a cualquier otra instrucción
+  del camino equivocado.
+- **Lo que queda en los latches son copias del propio HALT**, con todas sus
+  señales de control en 0 (`reg_write`, `mem_read`, `mem_write`): son NOPs
+  a efectos prácticos, sin ningún efecto pendiente. Se dejan así a
+  propósito, en vez de reemplazarlas por NOPs, porque la flag `is_halt`
+  visible en cada etapa le muestra al usuario, en el propio volcado, que
+  el pipeline drenó.
+- **A partir de ese ciclo el núcleo no avanza más.** En modo continuo la
+  Debug Unit lo congela en el mismo ciclo en que el HALT llega a WB, y un
+  `CMD_STEP` sobre un core detenido no lo mueve (sólo vuelve a volcar).
+  Así, los registros y la memoria del volcado son el estado final del
+  programa, en los dos modos.
+
+**Un programa que nunca llega a una instrucción de parada.** El HALT
+implícito cubre el caso de un programa que "se pasa" del final de lo
+cargado, pero no el de uno que nunca llega ahí, como un loop infinito.
+Para eso, el modo continuo admite una **pausa**: mientras corre un
+`CMD_RUN`, cualquier byte que llegue por la UART detiene el núcleo y
+dispara el volcado, con `core_halted=0` para que el host sepa que fue una
+pausa y no un HALT. Desde ahí se puede inspeccionar el estado, seguir
+paso a paso, o volver a mandar `CMD_RUN`, que continúa desde donde quedó.
+La CLI manda la pausa sola si el volcado no llega a tiempo, y la GUI
+tiene un botón para hacerlo (§5). Sin esto, la única salida sería el
+botón de reset de la placa, que además borraría el estado que se quería
+mirar.
 
 ### 3.3 Reprogramación: qué se vacía y qué no
 
@@ -331,15 +484,23 @@ El enunciado pide tratar los 3 tipos de riesgo aunque la respuesta sea
 instrucciones necesitan el mismo recurso físico en el mismo ciclo. En
 este diseño no puede pasar porque:
 
+- **Instrucciones y datos están en memorias separadas** (`imem.v` y
+  `dmem.v`, organización Harvard). Es el ejemplo con el que Patterson
+  presenta el riesgo estructural (4.5, *Structural Hazard*, sobre la
+  figura 4.25): con una sola memoria, en el mismo ciclo un load estaría
+  leyendo datos en MEM mientras una instrucción posterior se busca en
+  IF, y una de las dos tendría que esperar. Acá IF sólo lee `imem` y MEM
+  sólo accede a `dmem`, así que nunca compiten.
 - `register_file.v` tiene puertos de lectura y de escritura
   **separados** (2 lecturas asíncronas + 1 escritura síncrona): ID lee y
   WB escribe en el mismo ciclo sin contención, exactamente como asume el
   propio pipeline de Patterson.
 - `imem`/`dmem` tienen el puerto de acceso del pipeline separado del
   puerto de carga de la Debug Unit, y este último **sólo escribe
-  mientras el pipeline está congelado** (`global_stall_i=1` durante toda
-  una carga) — nunca hay un acceso real del core y una escritura de la
-  Debug Unit en el mismo ciclo.
+  mientras el núcleo está en soft-reset y congelado** (durante toda una
+  carga, §3.3) — nunca hay un acceso real del core y una escritura de la
+  Debug Unit en el mismo ciclo. La Dump Unit lee `dmem` por un tercer
+  puerto, sólo de lectura, y también con el núcleo congelado.
 - No hay una única ALU compartida entre etapas (la ALU vive sólo en EX;
   `branch_unit.v` en ID tiene su propio comparador y sumador
   independientes).
@@ -437,12 +598,26 @@ acá una vez repetida la síntesis.
 anterior. Es la opción más simple de implementar y de razonar (un solo
 formato de paquete, sin necesidad de rastrear qué cambió ciclo a ciclo),
 al costo de ancho de banda: con la `dmem` de 256 palabras del top
-sintetizable, un volcado pesa `(53 + 256) × 4 = 1236` bytes, unos ~107ms
+sintetizable, un volcado pesa `(55 + 256) × 4 = 1244` bytes, unos ~108ms
 a 115200 baudios — aceptable para un paso a paso interactivo. Con el
 default de 1024 palabras de `riscv_core.v` hubiese sido ~375ms,
 notoriamente peor; por eso el top sintetizable usa una `dmem` más chica
 que el default del núcleo (ambos son parámetros independientes,
 `DMEM_DEPTH_WORDS`).
+
+**Qué se manda además de lo que pide el enunciado.** El enunciado pide
+registros, latches y memoria de datos. El volcado agrega dos cosas
+chicas (2 palabras y 9 bits de STATUS) que no son estado sino
+*decisiones* del ciclo: la etapa IF (sin ella no se pueden dibujar las 5
+etapas), si el stall es por un riesgo de datos o por un HALT, y qué
+fuente eligió cada mux de forwarding. La alternativa era que la GUI
+recalculara esas decisiones a partir de los latches, reimplementando
+`hazard_unit.v` y `forwarding_unit.v` en Python: dos copias de la misma
+lógica que se pueden desincronizar sin que nadie lo note. Así la GUI
+muestra lo que decidió el hardware. Lo único que calcula el host son
+valores para mostrar (la salida de la ALU del ciclo actual, que todavía
+no está en ningún latch), y eso se contrasta contra el valor que el
+hardware latchea en EX/MEM al ciclo siguiente (`test_riscv_pipeview.py`).
 
 ### 3.8 El clock: sin gating, camino crítico medido, Clock Wizard pendiente de aplicar
 
@@ -453,6 +628,21 @@ elementos con estado del núcleo para el congelamiento de la Debug Unit,
 §3.9) y con resets controlados por la propia lógica de la Debug Unit, tal
 como exige el enunciado explícitamente.
 
+**Resets.** Los flip-flops usan reset asíncrono, con la regla clásica
+"se activa en forma asíncrona, se libera en forma síncrona"
+(`riscv_uart_top.v`). El botón de reset de la placa pasa por un
+sincronizador de 2 flip-flops antes de llegar al resto del diseño: se
+activa al instante, pero se libera alineado al clock, así todos los
+flip-flops salen de reset en el mismo ciclo. El soft-reset que genera la
+Debug Unit para el core sale de un flip-flop y no de la lógica
+combinacional de su FSM. Esto se corrigió en la revisión previa a la
+defensa: antes era una salida combinacional decodificada del estado, y
+al cambiar varios bits de estado a la vez (por ejemplo de `DUMP_WAIT` =
+`1100` a `RECV_CMD` = `0000`) podía pasar un instante por un estado de
+carga y generar un glitch. Sobre un reset asíncrono, un glitch resetea
+el core de verdad. La simulación funcional no puede mostrar este tipo de
+falla, porque no modela retardos de compuertas.
+
 **Camino crítico**, medido en la primera síntesis + implementación real
 (Fase 4): a 100MHz (10ns) el diseño no cierra timing — Worst Negative
 Slack (WNS) = -3.633ns, Total Negative Slack (TNS) = -320ns sobre 144
@@ -460,8 +650,11 @@ endpoints fallando (de 18325 totales). El peor path completo:
 
 - **Origen:** `u_core/u_id_ex/instr_o_reg[20]` — un bit de la instrucción
   latcheada en ID/EX.
-- **Destino:** `u_dump/current_word_reg_reg[1]` — el contador de palabra
-  actual de la Dump Unit.
+- **Destino:** `u_dump/current_word_reg_reg[1]` — el bit 1 del registro
+  donde la Dump Unit captura la palabra que va a transmitir. En la
+  palabra de STATUS ese bit es justamente `branch_taken` (ver
+  `docs/debug_protocol.md`), así que este registro es uno más de los
+  consumidores de esa señal.
 - **13.604ns de delay de datos, 19 niveles de lógica** (3×CARRY4, 2×LUT4,
   3×LUT5, 8×LUT6, 2×MUXF7, 1×MUXF8).
 
@@ -469,32 +662,45 @@ Los 3 peores paths reportados comparten el mismo origen y el mismo tramo
 inicial (hasta `u_core/u_if_id/branch_taken`), y sólo se diferencian en
 el destino final (la Dump Unit en un caso, latches de `if_id_reg` en los
 otros dos) — la señal cara de calcular es **`branch_taken`**, no los
-registros que la consumen después. Coincide exactamente con la decisión
-de diseño de §3.1: resolver los saltos en ID exige, en un solo ciclo,
-adelantar rs1/rs2 (forwarding con prioridad EX/MEM > MEM/WB, de ahí los
-pasos por `rs2_data_o` de `ex_mem`/`mem_wb` en el path), compararlos, y
-calcular el target con un sumador de 32 bits (los `CARRY4` encadenados
-sobre `pc_reg`) — todo antes de que termine el ciclo. Es el costo
-concreto, ahora medido, de haber elegido la variante de Patterson fig.
-4.62 (branch resuelto en ID) en vez de la más simple resuelta en EX: un
-camino combinacional más largo que compite con -- y en este caso supera
--- el presupuesto de un ciclo a 100MHz. `dump_unit.v`/`if_id_reg.v` no
-son la causa: heredan el retraso porque su lógica depende de
-`branch_taken`, no porque tengan un problema propio.
+registros que la consumen después.
+
+Es el costo, ahora medido, de la decisión de §3.1 de adelantar a ID el
+resultado de la ALU del mismo ciclo. Lo delata el origen del path: el bit
+20 de la instrucción en ID/EX es parte del campo `rs2` de la instrucción
+que está *en EX*, y la única forma de que llegue a `branch_taken` es
+atravesar, en el mismo ciclo, toda la etapa EX (selección de forwarding
+hacia la ALU y la ALU misma) y después la lógica de salto de ID (el mux
+de forwarding hacia ID y el comparador de 32 bits). Sin ese
+adelantamiento (la variante del libro), el comparador sólo se alimenta
+de latches (EX/MEM, MEM/WB y el banco de registros) y la ALU no queda en
+serie con él. `dump_unit.v`/`if_id_reg.v` tampoco son la causa: heredan
+el retraso porque su lógica depende de `branch_taken`, no porque tengan
+un problema propio. El destino en la Dump Unit, de hecho, es irrelevante
+en la práctica: sólo captura STATUS con el núcleo congelado, después de
+transmitir la palabra de SYNC, cuando `branch_taken` ya está estable hace
+miles de ciclos. Se podría
+declarar como *false path*, pero no cambiaría el resultado, porque los
+caminos hacia el PC y hacia IF/ID (que sí importan) tienen prácticamente
+el mismo largo.
 
 (El mismo reporte muestra además 3 *recovery checks* sobre `core_rst`
 llegando al `CLR` asíncrono de varios registros -- cierran con margen
 positivo de ~2ns cada una, no son un problema.)
 
-**Frecuencia a aplicar:** con 100MHz descartado, se va a generar un
-clock derivado más lento con el **Clock Wizard** de Vivado (IP Catalog),
-tal como sugiere el tip del enunciado -- nunca dividiendo el clock a
-mano con lógica propia, que sí sería intervenirlo. El delay medido
+**Frecuencia a aplicar:** con 100MHz descartado (consecuencia esperada
+de priorizar el CPI, §3.1), se va a generar un clock derivado más lento
+con el **Clock Wizard** de Vivado (IP Catalog), tal como sugiere el tip
+del enunciado -- nunca dividiendo el clock a mano con lógica propia, que
+sí sería intervenirlo. El delay medido
 (13.6ns) da un máximo teórico de ~73MHz sin margen; se aplican **50MHz**
 (20ns, ~6.4ns de margen sobre el peor path medido) por ser una fracción
 simple de los 100MHz de la placa y dejar margen amplio frente a
-variaciones de post-síntesis. Sección a completar con la confirmación
-final una vez vuelto a sintetizar con el clock derivado.
+variaciones de post-síntesis. Al aplicarlo, el parámetro `CLK_FREQ` de
+`riscv_uart_top` tiene que pasar a 50MHz: el generador de baudios calcula
+su divisor a partir de él, y con el valor viejo la UART transmitiría a la
+mitad del baud rate. Sección a completar con la confirmación final una
+vez vuelto a sintetizar con el clock derivado (checklist en
+`tp3/synt/README.md`, "Pendiente").
 
 Referencia teórica: Patterson, Apéndice A.11 (p.A-71).
 
@@ -560,7 +766,12 @@ definidos: `CYCLE_COUNT` pasa a contar ciclos **ejecutados** (tras `N`
 pasos vale `N`, en vez de incluir el tiempo entre comandos), y el bit
 `stalled` del STATUS refleja sólo los stalls propios del pipeline (antes
 valía 1 en todo volcado, porque el núcleo siempre está congelado mientras
-se transmite). Ver `tp3/docs/debug_protocol.md`.
+se transmite). Además, una vez que el HALT llega a WB la Debug Unit ya no
+libera el núcleo (ni con `CMD_RUN` ni con `CMD_STEP`): en la revisión se
+encontró que lo dejaba avanzar un ciclo de más, inofensivo para registros
+y memoria pero que inflaba `CYCLE_COUNT` en 1, y en otro más por cada
+`CMD_STEP` sobre un programa ya terminado. Ver
+`tp3/docs/debug_protocol.md`.
 
 **Verificación.** `tb_riscv_core.v` (sección 10) corre un programa que
 junta los casos sensibles (una instrucción no idempotente, un store, un
@@ -585,24 +796,26 @@ integración; cada módulo de Python tiene su propia suite de tests
 | `tp1/tb_alu.v` (regresión, confirma que extender la ALU no rompió nada) | 162/162 |
 | `tb_register_file.v` | 15/15 |
 | `tb_imm_gen.v` | 11/11 |
-| `tb_control_unit.v` | 19/19 |
+| `tb_control_unit.v` (incluidas las codificaciones fuera del subset: `blt`, `mul`, `ld`, ...) | 59/59 |
 | `tb_alu_control.v` | 20/20 |
 | `tb_branch_unit.v` | 7/7 |
 | `tb_forwarding_unit.v` | 10/10 |
-| `tb_hazard_unit.v` | 10/10 |
+| `tb_hazard_unit.v` | 14/14 |
 | `tb_pipeline_regs.v` | 41/41 |
 | `tb_imem.v` | 5/5 |
 | `tb_dmem.v` | 20/20 |
-| `tb_riscv_core.v` (integración del datapath completo, incluido el paso a paso) | 142/142 |
-| `tb_debug_unit.v` | 29/29 |
-| `tb_dump_unit.v` | 58/58 |
-| `tb_riscv_uart_top.v` (integración de punta a punta, UART real bit a bit) | 9/9 |
-| **Subtotal Verilog** (Icarus Verilog 12, corrida del 2026-10-04) | **558/558** |
-| `test_riscv_asm.py` | 41/41 |
-| `test_riscv_protocol.py` | 19/19 |
-| `test_riscv_client.py` (con un puerto serie simulado) | 1/1 |
-| **Subtotal Python** (última corrida registrada: 2026-08-18) | **61/61** |
-| **Total** | **619/619** |
+| `tb_riscv_core.v` (integración del datapath completo, incluido el paso a paso) | 173/173 |
+| `tb_debug_unit.v` | 43/43 |
+| `tb_dump_unit.v` | 60/60 |
+| `tb_pipeline_trace.v` (genera `host/testdata/pipeline_trace.hex`: un programa en modo paso a paso con el núcleo y la Dump Unit reales) | 5/5 |
+| `tb_riscv_uart_top.v` (integración de punta a punta, UART real bit a bit, incluida la pausa de un loop infinito y el `CYCLE_COUNT` exacto al llegar a HALT) | 19/19 |
+| **Subtotal Verilog** (Icarus Verilog 12, corrida del 2026-10-07) | **664/664** |
+| `test_riscv_asm.py` | 42/42 |
+| `test_riscv_protocol.py` (incluida la validación de tamaño contra imem/dmem) | 24/24 |
+| `test_riscv_client.py` (con un puerto serie simulado, incluida la pausa de un programa sin HALT, el rechazo de un programa o datos que no entran, y el modo paso a paso con volcados reales) | 5/5 |
+| `test_riscv_pipeview.py` (la vista de pipeline de la GUI contra la traza real del RTL) | 15/15 |
+| **Subtotal Python** (Python 3.12, corrida del 2026-10-07) | **86/86** |
+| **Total** | **750/750** |
 
 `tb_riscv_core.v` corre programas RV32I reales (armados con los mismos
 encoders que usa `host/riscv_asm.py`, ver `tp3/tb/riscv_isa_encode.vh`)
@@ -611,7 +824,15 @@ EX/MEM sobre MEM/WB, ambos hazards de stall, y HALT explícito e
 implícito. Su sección 10 verifica el modo paso a paso ciclo a ciclo
 contra una corrida libre (§3.9); se comprobó además que, sobre el RTL
 anterior al arreglo, esa sección falla (84 fallos: `x1` termina en 22 en
-vez de 3). `tb_riscv_uart_top.v` va un paso más allá: en vez de manejar
+vez de 3). Su sección 11 fija las dos correcciones de decodificación de
+la misma revisión: un `blt` o un `mul` armados a mano frenan el núcleo
+(§3.2), y el load-use sólo frena ante una dependencia real, con
+`CYCLE_COUNT` exacto con y sin dependencia (§2.3); sobre el RTL anterior,
+esa sección falla (8 fallos). Su sección 12 verifica, ciclo a ciclo, las
+salidas de debug que usa la GUI (etapa IF, stall de datos y selecciones
+de forwarding, §3.7) contra la cronología derivada a mano de un programa
+con forwarding a EX y a ID, un load-use y un salto tomado.
+`tb_riscv_uart_top.v` va un paso más allá: en vez de manejar
 la interfaz Rx/Tx a nivel de registro, banguea la línea `rx_i` bit a bit
 como lo haría una PC real y decodifica `tx_o` de la misma forma,
 atravesando la cadena completa (UART de TP2 + Debug Unit + Dump Unit +
@@ -669,30 +890,76 @@ TP2):
 - **`riscv_protocol.py`** — arma los paquetes de comando y decodifica el
   volcado de estado, sin ninguna dependencia de E/S: se puede probar con
   datos sintéticos sin hardware de por medio, y lo reutilizan tanto la
-  CLI como la GUI sin duplicar el parseo.
+  CLI como la GUI sin duplicar el parseo. También valida que un programa
+  o unos datos entren en la memoria del bitstream antes de mandarlos: el
+  hardware no lo detectaría (`imem.v`/`dmem.v` usan sólo los bits bajos
+  de la dirección, así que la palabra que sobra pisaría la dirección 0 sin
+  ningún error).
 - **`riscv_client.py`** — cliente de línea de comandos, análogo a
-  `tp2/host/alu_client.py`:
+  `tp2/host/alu_client.py`. En modo continuo, si el volcado no empieza a
+  llegar dentro de `--timeout` segundos (un programa sin HALT
+  alcanzable), manda la pausa (`CMD_BREAK`, §3.2) y muestra el estado en
+  que quedó el programa:
   ```
   python riscv_client.py --port COM4 --dmem-words 256 programa.asm
   python riscv_client.py --port COM4 --mode step --steps 20 programa.asm
+  python riscv_client.py --port COM4 --data datos.txt programa.asm
   ```
+  Con `--data` carga primero la memoria de datos (`CMD_LOAD_DATA`, un
+  número de 32 bits por línea); `--imem-words`/`--dmem-words` tienen que
+  coincidir con los parámetros del bitstream.
+  En modo paso a paso (`--mode step`) explica cada ciclo en castellano y
+  al final imprime el diagrama multiciclo en texto (ver
+  `riscv_pipeview.py`, abajo).
+- **`riscv_pipeview.py`** — interpreta un volcado como "qué está pasando
+  en cada etapa": la instrucción de cada una de las 5 (IF = PC + `imem`;
+  ID/EX/MEM/WB = el latch anterior a cada una, la convención del
+  Patterson), si es una burbuja, de dónde viene cada operando (flechas de
+  forwarding, tomadas de STATUS, §3.7), el motivo de cada stall
+  (load-use, load antes de un salto, HALT en ID) y cuándo un salto
+  descarta la instrucción de IF. Además arma el **diagrama multiciclo**
+  (filas = instrucciones, columnas = ciclos, como las figuras del
+  Patterson) juntando volcados de ciclos consecutivos: las reglas de
+  movimiento son las del hardware, y cada paso se contrasta contra los PC
+  del volcado nuevo (si no coinciden, o si un `CMD_RUN` salteó ciclos, el
+  diagrama vuelve a empezar). No toca tkinter ni el puerto serie, así que
+  se prueba contra una traza real del RTL: `tp3/tb/tb_pipeline_trace.v`
+  corre un programa que pasa por cada evento (forwarding a EX y a ID,
+  dato de un store adelantado, load-use, load antes de un salto, saltos
+  tomados y no tomados, `jal`/`jalr`, HALT drenando, memoria vacía
+  descartada en IF) con el núcleo y la Dump Unit reales, y
+  `test_riscv_pipeview.py` compara el diagrama resultante contra el
+  derivado a mano, y la ALU y la comparación de saltos que calcula Python
+  contra lo que hizo el hardware en cada ciclo.
 - **`riscv_gui.py`** — GUI de escritorio (tkinter), pensada para la
   defensa, con el mismo patrón de threads que `tp2/host/alu_gui.py` (la
   comunicación serie corre en un worker aparte, nunca toca widgets
   directamente, todo pasa por una cola que el `mainloop` drena con
-  `after()`). Editor de programa, botones Run/Step/Reset/Dump, panel de
-  los 32 registros, una tarjeta por etapa de pipeline con la instrucción
-  ya desensamblada, visor de memoria, y el mismo log byte a byte que ya
-  tenía la GUI de TP2.
+  `after()`). Editor de programa, botones Run/Step/Reset/Dump y un botón
+  Pausa que se habilita mientras corre un Run (§3.2). La pestaña de
+  ejecución **dibuja el pipeline** como las figuras del libro: las 5
+  etapas con su instrucción (cada instrucción conserva un color mientras
+  avanza, así se la ve viajar), los 4 latches, las flechas de forwarding
+  del ciclo con el registro y el valor adelantado, y marcas de stall,
+  burbuja, salto tomado, instrucción descartada y HALT, con una
+  explicación en castellano de lo que pasa en ese ciclo. Debajo, los 32
+  registros (resaltados los que cambiaron desde el volcado anterior), el
+  contenido crudo de cada latch tal como llegó por la UART, y el diagrama
+  multiciclo que se va armando con cada Step. La pestaña de memoria de
+  datos tiene un editor de los datos iniciales (que se cargan con
+  `CMD_LOAD_DATA`) al lado del contenido real según el último volcado
+  (por defecto sólo la memoria usada, con los cambios resaltados), y el
+  log byte a byte de la UART tiene su propia pestaña. Entra en una
+  pantalla de 1280×720.
   ```
   python riscv_gui.py
   ```
 
 ## 6. Estado del proyecto y próximos pasos
 
-- [x] **Fase 1** — Datapath completo (`rtl/core/`), 300 tests.
-- [x] **Fase 2** — Debug Unit + Dump Unit + top UART (`rtl/debug/`), 96 tests (+162 de regresión de la ALU de TP1).
-- [x] **Fase 3** — Herramientas de host (`host/`), 61 tests.
+- [x] **Fase 1** — Datapath completo (`rtl/core/`), 375 tests.
+- [x] **Fase 2** — Debug Unit + Dump Unit + top UART (`rtl/debug/`), 127 tests (+162 de regresión de la ALU de TP1).
+- [x] **Fase 3** — Herramientas de host (`host/`), 86 tests.
 - [ ] **Fase 4** — Proyecto Vivado, síntesis, timing closure (§3.8 queda
       pendiente hasta esta fase).
 - [ ] **Fase 5** — Validación en una Basys 3 real.
@@ -704,10 +971,12 @@ verificación y los próximos pasos concretos.
 
 El pipeline implementa el subset de RV32I completo que pide el
 enunciado, con las tres clases de riesgo tratadas explícitamente
-(incluido el estructural, con su justificación de por qué no aparece), y
-con la variante de resolución de saltos en ID que el propio Patterson
-presenta como el cierre natural del tema de riesgos de control — no la
-alternativa más simple, la más correlacionable con el libro. Cada
+(incluido el estructural, con su justificación de por qué no aparece). Los
+saltos se resuelven en ID, la mejora que presenta Patterson sobre la
+versión básica, y además se adelanta a ID el resultado de la ALU del
+mismo ciclo: una decisión propia que prioriza el CPI por sobre la
+frecuencia de clock, con su costo medido en el camino crítico (§3.1,
+§3.8). Cada
 pregunta abierta que plantea el enunciado (reprogramación, HALT ausente,
 riesgo estructural) tiene una respuesta concreta e implementada, no sólo
 discutida; la única que sigue abierta (camino crítico, skew, frecuencia)
@@ -715,12 +984,14 @@ depende de una herramienta externa (Vivado) que todavía no se corrió, no
 de una decisión de diseño pendiente.
 
 La Debug Unit expone exactamente lo que pide el enunciado (registros,
-latches, memoria) con un protocolo propio, inspirado en el patrón
+latches, memoria, y además la etapa IF y las decisiones de hazard y
+forwarding de cada ciclo, que la GUI usa para dibujar el pipeline) con
+un protocolo propio, inspirado en el patrón
 comando+trigger que ya había probado su robustez en TP2, y las
 herramientas de host (ensamblador, CLI y GUI) extienden directamente lo
 que ese mismo TP2 ya había construido en vez de empezar de cero.
 
-Las 619 verificaciones automáticas (558 en Verilog, 61 en Python) cubren
+Las 750 verificaciones automáticas (664 en Verilog, 86 en Python) cubren
 cada instrucción del set pedido, cada camino de adelantamiento, ambos
 hazards de stall, HALT explícito e implícito, el protocolo completo de
 la Debug Unit incluyendo el bit-banging real de UART, y el camino de

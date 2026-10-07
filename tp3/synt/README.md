@@ -1,8 +1,13 @@
 # Fase 4 — Proyecto Vivado (Basys 3)
 
-Acá va a vivir el proyecto de síntesis una vez que lo crees en Vivado
-(carpeta `tp3_riscv/`, la genera Vivado solo — no hace falta armarla a
-mano). Mismo patrón que `tp2/synt/tp2_uart/`.
+**El proyecto ya está creado: `synt/project_1/project_1.xpr`** (part
+`xc7a35tcpg236-1`, top `riscv_uart_top`, fuentes y `.xdc` referenciados
+desde el repo, sin copiar). Ya se corrió una primera síntesis +
+implementación (resultados en `tp3/informe.md` §3.6 y §3.8). Los pasos
+1-3 de abajo quedan como referencia de cómo se armó; lo que falta está en
+**"Pendiente"**, al final de este archivo. Mismo patrón que
+`tp2/synt/tp2_uart/` (donde los pasos dicen `tp3_riscv`, el proyecto real
+quedó con el nombre por defecto, `project_1`).
 
 ## Pasos
 
@@ -81,11 +86,12 @@ otras versiones, pero el flujo es el mismo.
    solo si quedó tildado al terminar la implementación). Anotar el
    Worst Negative Slack (WNS):
    - Si es ≥ 0: cierra a 100MHz, no hace falta tocar nada más.
-   - Si es negativo: no cierra a 100MHz. Dos caminos — bajar la
-     frecuencia directamente en `create_clock` del .xdc, o generar un
-     clock derivado más lento con el Clock Wizard (IP Catalog) e
-     instanciarlo entre `clk_i` y el resto del diseño. Cualquiera de los
-     dos es válido; documentar cuál se eligió y por qué en el informe.
+   - Si es negativo: no cierra a 100MHz, y hay que generar un clock
+     derivado más lento con el Clock Wizard (ver "Pendiente", abajo).
+     **Cambiar sólo el período de `create_clock` en el .xdc NO sirve:**
+     eso no cambia la frecuencia real (el oscilador de la placa sigue en
+     100MHz), sólo le cambia a Vivado contra qué compara -- el reporte
+     daría OK y el hardware fallaría igual.
 
 ### 6. Documentar
 
@@ -93,6 +99,46 @@ Completar `tp3/informe.md` §3.8 con los números reales: camino crítico
 (qué instancia/señal lo genera, lo dice el Timing Summary), si hay skew
 y sus consecuencias, y la frecuencia final aplicada. Actualizar también
 la tabla de estado de `tp3/README.md` (Fase 4/5).
+
+## Pendiente
+
+Estado al 2026-10-05: la primera síntesis falló por exceso de flip-flops
+(ya corregido en el RTL, informe §3.6) y la implementación midió WNS =
+-3.633ns a 100MHz (informe §3.8). Desde entonces cambió el RTL (freeze
+del modo paso a paso, pausa de `CMD_RUN`, reset sincronizado,
+`parity_en_i` conectado), así que esos números hay que volver a medirlos.
+
+1. **Re-sintetizar.** Click derecho sobre "Synthesis" → **Reset Runs**, y
+   correr Synthesis → Implementation. Anotar la utilización
+   (**Report Utilization**: LUT, FF, LUTRAM, BRAM) para completar el
+   informe §3.6.
+2. **Clock Wizard a 50MHz.** IP Catalog → *Clocking Wizard*: entrada
+   100MHz, `clk_out1` = 50MHz. Recomendado: instanciarlo en un top nuevo
+   sólo para síntesis (p.ej. `rtl/debug/riscv_fpga_top.v`: Clock Wizard
+   + `riscv_uart_top`), y dejar `riscv_uart_top` como está -- el IP del
+   Clock Wizard no se puede simular con Icarus, y así los testbenches
+   siguen andando sin tocarlos. Dos detalles que no hay que olvidar:
+   - **`CLK_FREQ` de `riscv_uart_top` tiene que pasar a `50_000_000`.**
+     Si queda en 100MHz, el generador de baudios cuenta mal y la UART
+     transmite a la mitad del baud rate: la PC no la entiende.
+   - Mantener el diseño en reset hasta que el Clock Wizard enganche: usar
+     `rst_i | ~locked` como reset de entrada.
+   El `create_clock` del .xdc se queda como está (describe el oscilador
+   real de 100MHz); Vivado deriva solo el clock de 50MHz de la salida
+   del Clock Wizard.
+3. **Verificar timing a 50MHz** (Report Timing Summary): WNS ≥ 0, y
+   anotar el nuevo camino crítico.
+4. **Skew** (la consigna lo pregunta explícitamente: *"¿este camino
+   crítico genera skew en mi sistema? ¿qué consecuencias tiene?"*). En el
+   detalle del peor path (Report Timing → doble click sobre el path),
+   leer la línea **Clock Path Skew**; para una vista general, **Report
+   Clock Networks** / **Report Clock Interaction**. Documentar el valor y
+   su efecto: el skew se suma o se resta al presupuesto de tiempo de cada
+   path (Vivado ya lo incluye en el slack), y en un FPGA, con el clock
+   distribuido por buffers globales (BUFG), suele ser de décimas de ns.
+5. **Documentar** en el informe §3.6 (utilización) y §3.8 (frecuencia
+   final, nuevo camino crítico, skew) y actualizar la tabla de estado de
+   `tp3/README.md`.
 
 ## Qué se versiona
 

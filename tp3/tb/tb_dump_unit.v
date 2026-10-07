@@ -4,7 +4,7 @@
 //
 // Descripción:
 // Verifica dump_unit.v de punta a punta: arma valores de prueba
-// reconocibles para cada entrada (registros, los 4 latches, status,
+// reconocibles para cada entrada (registros, los 4 latches, la etapa IF, status,
 // ciclos, y una dmem chica simulada localmente), dispara un volcado,
 // captura los bytes que salen por el lado Tx (con un modelo simple de
 // tx_full_i, no timing real de UART -- eso lo cubre tb_riscv_uart_top.v)
@@ -14,7 +14,7 @@
 module tb_dump_unit;
 
     localparam DMEM_WORDS = 4;
-    localparam FIXED_WORDS = 53;
+    localparam FIXED_WORDS = 55;
     localparam TOTAL_WORDS = FIXED_WORDS + DMEM_WORDS;
 
     parameter CLK_PERIOD = 10;
@@ -22,8 +22,11 @@ module tb_dump_unit;
     reg tb_trigger;
     wire tb_done;
 
-    reg tb_core_halted, tb_branch_taken, tb_pc_we;
+    reg tb_core_halted, tb_branch_taken, tb_pc_we, tb_hazard_stall;
+    reg [7:0]  tb_fwd_sel;
     reg [31:0] tb_cycle_count;
+
+    reg [31:0] tb_if_pc, tb_if_instr;
 
     reg [31:0] tb_ifid_pc, tb_ifid_instr;
     reg [31:0] tb_idex_pc, tb_idex_instr, tb_idex_rs1, tb_idex_rs2, tb_idex_imm;
@@ -52,7 +55,9 @@ module tb_dump_unit;
         .clk_i(tb_clk), .rst_i(tb_rst),
         .dump_trigger_i(tb_trigger), .dump_done_o(tb_done),
         .core_halted_i(tb_core_halted), .branch_taken_i(tb_branch_taken), .pc_write_en_i(tb_pc_we),
+        .hazard_stall_i(tb_hazard_stall), .fwd_sel_i(tb_fwd_sel),
         .cycle_count_i(tb_cycle_count),
+        .if_pc_i(tb_if_pc), .if_instr_i(tb_if_instr),
         .if_id_pc_i(tb_ifid_pc), .if_id_instr_i(tb_ifid_instr),
         .id_ex_pc_i(tb_idex_pc), .id_ex_instr_i(tb_idex_instr),
         .id_ex_rs1_data_i(tb_idex_rs1), .id_ex_rs2_data_i(tb_idex_rs2), .id_ex_imm_i(tb_idex_imm),
@@ -127,7 +132,13 @@ module tb_dump_unit;
 
         // --- Valores de prueba, todos reconocibles ---
         tb_core_halted = 1; tb_branch_taken = 0; tb_pc_we = 0; // stalled = ~pc_we = 1
+        tb_hazard_stall = 1;
+        // Cada selección de forwarding con un valor distinto, para que un
+        // campo en el lugar equivocado se note: b_id=11, a_id=10, b_ex=01, a_ex=00
+        tb_fwd_sel = 8'b11_10_01_00;
         tb_cycle_count = 32'd12345;
+
+        tb_if_pc = 32'h0000000C; tb_if_instr = 32'h00A00093; // addi x1, x0, 10
 
         tb_ifid_pc = 32'h00000010; tb_ifid_instr = 32'h00000013;
 
@@ -162,7 +173,8 @@ module tb_dump_unit;
 
         // --- Palabras esperadas (mismo orden que debug_protocol.md) ---
         expected[0]  = 32'hAA55AA55;
-        expected[1]  = {29'b0, 1'b1, 1'b0, 1'b1}; // stalled=1, branch_taken=0, core_halted=1
+        // fwd_sel en [15:8]; hazard_stall=1, stalled=1, branch_taken=0, core_halted=1
+        expected[1]  = {16'b0, 8'b11_10_01_00, 4'b0, 1'b1, 1'b1, 1'b0, 1'b1};
         expected[2]  = 32'd12345;
         expected[3]  = tb_ifid_pc;
         expected[4]  = tb_ifid_instr;
@@ -185,6 +197,8 @@ module tb_dump_unit;
         for (i = 0; i < 32; i = i + 1) begin
             expected[21+i] = 32'h00000100 + i;
         end
+        expected[53] = tb_if_pc;
+        expected[54] = tb_if_instr;
         for (i = 0; i < DMEM_WORDS; i = i + 1) begin
             expected[FIXED_WORDS+i] = 32'hDDDD0000 + i;
         end
@@ -226,6 +240,8 @@ module tb_dump_unit;
         for (i = 0; i < 32; i = i + 1) begin
             check_word("registro", 21+i, expected[21+i]);
         end
+        check_word("IF.pc",         53, expected[53]);
+        check_word("IF.instr",      54, expected[54]);
         for (i = 0; i < DMEM_WORDS; i = i + 1) begin
             check_word("dmem", FIXED_WORDS+i, expected[FIXED_WORDS+i]);
         end

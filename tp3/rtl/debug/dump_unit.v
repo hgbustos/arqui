@@ -3,7 +3,8 @@
 //
 // Descripción:
 // Serializa el snapshot completo de estado del core (registros, los 4
-// latches de pipeline, status, ciclos, y toda la memoria de datos) hacia
+// latches de pipeline, la etapa IF, status, ciclos, y toda la memoria de
+// datos) hacia
 // el lado Tx del Interface Circuit (uart_interface.v de TP2), palabra de
 // 32 bits a palabra, cada una en 4 bytes little-endian. Formato exacto
 // (qué índice de palabra es cada campo) documentado en
@@ -16,7 +17,7 @@
 // bajar (confirma que se transmitió de verdad) antes de mandar el
 // siguiente.
 //
-// Para las palabras 53 en adelante (memoria de datos), el valor no está
+// Para las palabras 55 en adelante (memoria de datos), el valor no está
 // en un puerto directo sino detrás de un mux+memoria externa
 // (dmem_dbg_addr_o -> riscv_core.v -> dmem.v -> dmem_dbg_rdata_i,
 // combinacional de punta a punta): por eso hay un estado 'PREP_WORD'
@@ -40,7 +41,13 @@ module dump_unit #(
     input  wire        core_halted_i,
     input  wire        branch_taken_i,
     input  wire        pc_write_en_i,
+    input  wire        hazard_stall_i,
+    input  wire [7:0]  fwd_sel_i,      // {fwd_b_id, fwd_a_id, fwd_b_ex, fwd_a_ex}
     input  wire [31:0] cycle_count_i,
+
+    // --- Etapa IF (PC actual y la instrucción que imem devuelve para él) ---
+    input  wire [31:0] if_pc_i,
+    input  wire [31:0] if_instr_i,
 
     // --- Latch IF/ID ---
     input  wire [31:0] if_id_pc_i,
@@ -94,7 +101,7 @@ module dump_unit #(
 );
 
     localparam [31:0] SYNC_WORD    = 32'hAA55AA55;
-    localparam        FIXED_WORDS  = 53;
+    localparam        FIXED_WORDS  = 55;
     localparam        TOTAL_WORDS  = FIXED_WORDS + DMEM_DEPTH_WORDS;
     localparam         IDX_BITS     = $clog2(TOTAL_WORDS);
 
@@ -110,15 +117,16 @@ module dump_unit #(
     reg [1:0]           byte_idx_reg, byte_idx_next;
     reg [31:0]          current_word_reg, current_word_next;
 
-    // Palabra actual segun 'word_idx_reg': campos fijos (0..52) leen
-    // directo de los puertos del core; de ahi en más (53..) es
+    // Palabra actual segun 'word_idx_reg': campos fijos (0..54) leen
+    // directo de los puertos del core; de ahi en más (55..) es
     // 'dmem_dbg_rdata_i', ya direccionado por 'dmem_dbg_addr_o' (ver
     // abajo) durante todo el ciclo de PREP_WORD.
     reg [31:0] word_value;
     always @(*) begin
         case (word_idx_reg)
             0:  word_value = SYNC_WORD;
-            1:  word_value = {29'b0, ~pc_write_en_i, branch_taken_i, core_halted_i};
+            1:  word_value = {16'b0, fwd_sel_i, 4'b0,
+                               hazard_stall_i, ~pc_write_en_i, branch_taken_i, core_halted_i};
             2:  word_value = cycle_count_i;
             3:  word_value = if_id_pc_i;
             4:  word_value = if_id_instr_i;
@@ -172,7 +180,11 @@ module dump_unit #(
             50: word_value = regs_flat_i[32*29 +: 32];
             51: word_value = regs_flat_i[32*30 +: 32];
             52: word_value = regs_flat_i[32*31 +: 32];
-            default: word_value = dmem_dbg_rdata_i; // 53..TOTAL_WORDS-1
+            // Etapa IF: agregada al final del bloque fijo (y no antes de
+            // IF/ID) para no mover ningún índice ya existente.
+            53: word_value = if_pc_i;
+            54: word_value = if_instr_i;
+            default: word_value = dmem_dbg_rdata_i; // 55..TOTAL_WORDS-1
         endcase
     end
 

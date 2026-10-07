@@ -18,9 +18,9 @@ entre Verilog y Python.
 import unittest
 
 from riscv_protocol import (
-    CMD_DUMP, CMD_LOAD_DATA, CMD_LOAD_PROG, CMD_RESET, CMD_RUN, CMD_STEP,
-    FIXED_WORDS, SYNC_WORD, ProtocolError,
-    build_dump_packet, build_load_data_packet, build_load_prog_packet,
+    CMD_BREAK, CMD_DUMP, CMD_LOAD_DATA, CMD_LOAD_PROG, CMD_RESET, CMD_RUN, CMD_STEP,
+    DMEM_WORDS_DEFAULT, FIXED_WORDS, IMEM_WORDS_DEFAULT, SYNC_WORD, ProtocolError,
+    build_break_packet, build_dump_packet, build_load_data_packet, build_load_prog_packet,
     build_reset_packet, build_run_packet, build_step_packet,
     expected_dump_size, parse_dump, to_signed32,
 )
@@ -49,14 +49,39 @@ class TestPaquetesDeComando(unittest.TestCase):
         self.assertEqual(pkt, bytes([CMD_LOAD_PROG, 0, 0]))
 
     def test_demasiadas_palabras_lanza_error(self):
+        # Limite del campo N (16 bits), independiente del tamaño de imem.
         with self.assertRaises(ProtocolError):
-            build_load_prog_packet([0] * 70000)
+            build_load_prog_packet([0] * 70000, imem_words=100000)
+
+    def test_programa_que_no_entra_en_imem(self):
+        self.assertEqual(len(build_load_prog_packet([0] * IMEM_WORDS_DEFAULT)),
+                         3 + 4 * IMEM_WORDS_DEFAULT)  # justo al limite: entra
+        with self.assertRaises(ProtocolError):
+            build_load_prog_packet([0] * (IMEM_WORDS_DEFAULT + 1))
+        with self.assertRaises(ProtocolError):
+            build_load_prog_packet([0] * 9, imem_words=8)
+
+    def test_datos_que_no_entran_en_dmem(self):
+        self.assertEqual(len(build_load_data_packet([0] * DMEM_WORDS_DEFAULT)),
+                         3 + 4 * DMEM_WORDS_DEFAULT)
+        with self.assertRaises(ProtocolError):
+            build_load_data_packet([0] * (DMEM_WORDS_DEFAULT + 1))
+        with self.assertRaises(ProtocolError):
+            build_load_data_packet([0] * 5, dmem_words=4)
 
     def test_comandos_simples_son_un_solo_byte(self):
         self.assertEqual(build_run_packet(), bytes([CMD_RUN]))
         self.assertEqual(build_step_packet(), bytes([CMD_STEP]))
         self.assertEqual(build_dump_packet(), bytes([CMD_DUMP]))
         self.assertEqual(build_reset_packet(), bytes([CMD_RESET]))
+        self.assertEqual(build_break_packet(), bytes([CMD_BREAK]))
+
+    def test_break_no_choca_con_ningun_otro_comando(self):
+        # Fuera de un CMD_RUN, la Debug Unit descarta CMD_BREAK como
+        # comando desconocido: eso sólo es cierto si su valor no coincide
+        # con ningún comando real.
+        otros = {CMD_LOAD_PROG, CMD_LOAD_DATA, CMD_RUN, CMD_STEP, CMD_DUMP, CMD_RESET}
+        self.assertNotIn(CMD_BREAK, otros)
 
 
 class TestParseDumpSintetico(unittest.TestCase):
@@ -65,7 +90,10 @@ class TestParseDumpSintetico(unittest.TestCase):
         words = [0] * (FIXED_WORDS + self.dmem_words)
 
         words[0] = SYNC_WORD
-        words[1] = 0b101  # stalled=1, branch_taken=0, core_halted=1
+        # fwd_sel = {b_id=11, a_id=10, b_ex=01, a_ex=00} en [15:8] (cada
+        # campo distinto, para que uno corrido de lugar se note);
+        # hazard_stall=1, stalled=1, branch_taken=0, core_halted=1
+        words[1] = (0b11_10_01_00 << 8) | 0b1101
         words[2] = 12345
 
         words[3] = 0x00000010  # if_id.pc
@@ -92,6 +120,8 @@ class TestParseDumpSintetico(unittest.TestCase):
 
         for i in range(32):
             words[21 + i] = 0x100 + i
+        words[53] = 0x0000000C         # IF.pc
+        words[54] = 0x00A00093         # IF.instr (addi x1, x0, 10)
         for i in range(self.dmem_words):
             words[FIXED_WORDS + i] = 0xDDDD0000 + i
 
@@ -105,7 +135,16 @@ class TestParseDumpSintetico(unittest.TestCase):
         self.assertTrue(self.state.core_halted)
         self.assertFalse(self.state.branch_taken)
         self.assertTrue(self.state.stalled)
+        self.assertTrue(self.state.hazard_stall)
         self.assertEqual(self.state.cycle_count, 12345)
+
+    def test_selecciones_de_forwarding(self):
+        f = self.state.forwarding
+        self.assertEqual((f.a_ex, f.b_ex, f.a_id, f.b_id), (0, 1, 2, 3))
+
+    def test_etapa_if(self):
+        self.assertEqual(self.state.if_stage.pc, 0x0C)
+        self.assertEqual(self.state.if_stage.instr, 0x00A00093)
 
     def test_if_id(self):
         self.assertEqual(self.state.if_id.pc, 0x10)

@@ -71,6 +71,15 @@ module riscv_core #(
     output wire              pc_write_en_o,
     output wire [31:0]       cycle_count_o,
 
+    // --- Debug: decisiones de hazard/forwarding del ciclo actual (para
+    // que la GUI muestre lo que decide el hardware, sin re-derivarlo) ---
+    output wire              hazard_stall_o,  // stall por riesgo de datos (burbuja en ID/EX)
+    output wire [7:0]        fwd_sel_o,       // {fwd_b_id, fwd_a_id, fwd_b_ex, fwd_a_ex}
+
+    // --- Debug: etapa IF (no es un latch: el PC y lo que imem devuelve para él) ---
+    output wire [31:0] if_pc_o,
+    output wire [31:0] if_instr_o,
+
     // --- Debug: latch IF/ID ---
     output wire [31:0] if_id_pc_o,
     output wire [31:0] if_id_instr_o,
@@ -195,14 +204,18 @@ module riscv_core #(
     wire [4:0] id_rs1_addr  = if_id_instr[19:15];
     wire [4:0] id_rs2_addr  = if_id_instr[24:20];
     wire [2:0] id_funct3    = if_id_instr[14:12];
+    wire [6:0] id_funct7    = if_id_instr[31:25];
 
     wire id_reg_write, id_alu_src_a, id_alu_src_b, id_mem_read, id_mem_write,
-         id_mem_to_reg, id_is_jal, id_is_jalr, id_is_branch, id_is_halt;
+         id_mem_to_reg, id_is_jal, id_is_jalr, id_is_branch, id_is_halt,
+         id_uses_rs1, id_uses_rs2;
     wire [1:0] id_alu_op;
     wire [2:0] id_imm_sel;
 
     control_unit u_control (
         .opcode_i    (id_opcode),
+        .funct3_i    (id_funct3),
+        .funct7_i    (id_funct7),
         .reg_write_o (id_reg_write),
         .alu_src_a_o (id_alu_src_a),
         .alu_src_b_o (id_alu_src_b),
@@ -214,7 +227,9 @@ module riscv_core #(
         .is_jalr_o   (id_is_jalr),
         .is_branch_o (id_is_branch),
         .is_halt_o   (id_is_halt),
-        .imm_sel_o   (id_imm_sel)
+        .imm_sel_o   (id_imm_sel),
+        .uses_rs1_o  (id_uses_rs1),
+        .uses_rs2_o  (id_uses_rs2)
     );
 
     wire [31:0] id_rs1_data_raw, id_rs2_data_raw;
@@ -279,10 +294,13 @@ module riscv_core #(
     // el núcleo siempre está congelado mientras se transmite.
     assign branch_taken_o = branch_taken;
     assign pc_write_en_o  = hazard_pc_we;
+    assign hazard_stall_o = hazard_idex_bubble; // = stall_hazard de hazard_unit (load-use / load antes de salto)
 
     hazard_unit u_hazard (
         .id_rs1_addr_i    (id_rs1_addr),
         .id_rs2_addr_i    (id_rs2_addr),
+        .id_uses_rs1_i    (id_uses_rs1),
+        .id_uses_rs2_i    (id_uses_rs2),
         .id_is_branch_i   (id_is_branch),
         .id_is_jalr_i     (id_is_jalr),
         .id_is_halt_i     (id_is_halt),
@@ -522,6 +540,10 @@ module riscv_core #(
     // =========================================================================
     // Salidas de debug (una por campo latcheado, ver header)
     // =========================================================================
+    assign fwd_sel_o  = {fwd_b_id, fwd_a_id, fwd_b_ex, fwd_a_ex};
+    assign if_pc_o    = pc_reg;
+    assign if_instr_o = imem_instr;
+
     assign if_id_pc_o    = if_id_pc;
     assign if_id_instr_o = if_id_instr;
 

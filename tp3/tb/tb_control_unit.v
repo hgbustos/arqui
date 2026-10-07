@@ -6,7 +6,10 @@
 // Recorre los 9 opcodes que reconoce control_unit.v (R/I/Load/Store/Branch/
 // JAL/JALR/LUI/HALT) más un par de opcodes basura, y verifica el bundle de
 // señales de control completo contra lo que corresponde según el enunciado
-// de TP3 y el mapeo de opcode de RV32I.
+// de TP3 y el mapeo de opcode de RV32I. Después verifica uses_rs1/uses_rs2
+// por tipo, y que las codificaciones con opcode conocido pero funct3/funct7
+// fuera del subset (blt, mul, ld, sd, ...) caigan en HALT implícito sin
+// arrastrar a las válidas que comparten opcode (sub, sra, srai, lhu, ...).
 // =============================================================================
 module tb_control_unit;
 
@@ -31,6 +34,9 @@ module tb_control_unit;
     localparam ALUOP_ITYPE = 2'b10;
 
     reg  [6:0] tb_opcode;
+    reg  [2:0] tb_funct3;
+    reg  [6:0] tb_funct7;
+    wire       tb_uses_rs1, tb_uses_rs2;
     wire       tb_reg_write, tb_alu_src_a, tb_alu_src_b;
     wire [1:0] tb_alu_op;
     wire       tb_mem_read, tb_mem_write, tb_mem_to_reg;
@@ -41,6 +47,8 @@ module tb_control_unit;
 
     control_unit uut (
         .opcode_i     (tb_opcode),
+        .funct3_i     (tb_funct3),
+        .funct7_i     (tb_funct7),
         .reg_write_o  (tb_reg_write),
         .alu_src_a_o  (tb_alu_src_a),
         .alu_src_b_o  (tb_alu_src_b),
@@ -52,7 +60,9 @@ module tb_control_unit;
         .is_jalr_o    (tb_is_jalr),
         .is_branch_o  (tb_is_branch),
         .is_halt_o    (tb_is_halt),
-        .imm_sel_o    (tb_imm_sel)
+        .imm_sel_o    (tb_imm_sel),
+        .uses_rs1_o   (tb_uses_rs1),
+        .uses_rs2_o   (tb_uses_rs2)
     );
 
     task check;
@@ -80,12 +90,63 @@ module tb_control_unit;
         end
     endfunction
 
+    // Bundle de un HALT (explícito o implícito): todo inerte salvo is_halt.
+    localparam [12:0] HALT_BUNDLE = {1'b0,1'b0,1'b0, ALUOP_ADD, 1'b0,1'b0,1'b0, 1'b0,1'b0,1'b0,1'b1};
+
+    task check_uses;
+        input [511:0] label;
+        input         exp_rs1, exp_rs2;
+        begin
+            if (tb_uses_rs1 === exp_rs1 && tb_uses_rs2 === exp_rs2) begin
+                pass_count = pass_count + 1;
+                $display("  -> EXITO | %0s: uses_rs1=%0b uses_rs2=%0b", label, exp_rs1, exp_rs2);
+            end else begin
+                fail_count = fail_count + 1;
+                $error("  -> FALLO | %0s: esperado uses_rs1/2=%0b%0b, recibido=%0b%0b",
+                       label, exp_rs1, exp_rs2, tb_uses_rs1, tb_uses_rs2);
+            end
+        end
+    endtask
+
+    // Codificación fuera del subset: bundle de HALT y sin leer registros
+    // (un halt nunca tiene que generar un stall de hazard).
+    task check_illegal;
+        input [511:0] label;
+        input [6:0]   op; input [2:0] f3; input [6:0] f7;
+        begin
+            tb_opcode = op; tb_funct3 = f3; tb_funct7 = f7; #1;
+            check(label, pack_actual(0), HALT_BUNDLE);
+            check_uses(label, 1'b0, 1'b0);
+        end
+    endtask
+
+    // Codificación válida que comparte opcode con alguna ilegal: no
+    // tiene que haber quedado atrapada por el chequeo de funct3/funct7.
+    task check_legal;
+        input [511:0] label;
+        input [6:0]   op; input [2:0] f3; input [6:0] f7;
+        begin
+            tb_opcode = op; tb_funct3 = f3; tb_funct7 = f7; #1;
+            if (tb_is_halt === 1'b0) begin
+                pass_count = pass_count + 1;
+                $display("  -> EXITO | %0s: no es halt", label);
+            end else begin
+                fail_count = fail_count + 1;
+                $error("  -> FALLO | %0s: se decodifico como halt", label);
+            end
+        end
+    endtask
+
     initial begin
         $display("========================================");
         $display("Inicio de la Verificacion de control_unit");
         $display("========================================");
         pass_count = 0;
         fail_count = 0;
+
+        // funct3=funct7=0 en esta primera parte: add/addi/lb/sb/beq/jalr,
+        // todas dentro del subset.
+        tb_funct3 = 3'b000; tb_funct7 = 7'b0000000;
 
         tb_opcode = OP_R; #1;
         check("OP_R", pack_actual(0), {1'b1,1'b0,1'b0, ALUOP_RTYPE, 1'b0,1'b0,1'b0, 1'b0,1'b0,1'b0,1'b0});
@@ -137,6 +198,41 @@ module tb_control_unit;
 
         tb_opcode = 7'b1111111; #1;
         check("Opcode 1111111 (basura) -> halt implicito", pack_actual(0), {1'b0,1'b0,1'b0, ALUOP_ADD, 1'b0,1'b0,1'b0, 1'b0,1'b0,1'b0,1'b1});
+
+        $display("\n--- uses_rs1/uses_rs2: que registros lee de verdad cada tipo ---");
+        tb_funct3 = 3'b000; tb_funct7 = 7'b0000000;
+        tb_opcode = OP_R;      #1; check_uses("R-type",  1'b1, 1'b1);
+        tb_opcode = OP_IMM;    #1; check_uses("I-type (rs2 es inmediato)", 1'b1, 1'b0);
+        tb_opcode = OP_LOAD;   #1; check_uses("Load",    1'b1, 1'b0);
+        tb_opcode = OP_STORE;  #1; check_uses("Store (base + dato)", 1'b1, 1'b1);
+        tb_opcode = OP_BRANCH; #1; check_uses("Branch",  1'b1, 1'b1);
+        tb_opcode = OP_JAL;    #1; check_uses("JAL (todo inmediato)", 1'b0, 1'b0);
+        tb_opcode = OP_JALR;   #1; check_uses("JALR",    1'b1, 1'b0);
+        tb_opcode = OP_LUI;    #1; check_uses("LUI (todo inmediato)", 1'b0, 1'b0);
+        tb_opcode = OP_HALT;   #1; check_uses("HALT",    1'b0, 1'b0);
+
+        $display("\n--- Opcode conocido, funct3/funct7 fuera del subset -> halt implicito ---");
+        check_illegal("blt  (branch funct3=100)",  OP_BRANCH, 3'b100, 7'b0000000);
+        check_illegal("bge  (branch funct3=101)",  OP_BRANCH, 3'b101, 7'b0000000);
+        check_illegal("bltu (branch funct3=110)",  OP_BRANCH, 3'b110, 7'b0000000);
+        check_illegal("bgeu (branch funct3=111)",  OP_BRANCH, 3'b111, 7'b0000000);
+        check_illegal("mul  (R funct7=0000001)",   OP_R,      3'b000, 7'b0000001);
+        check_illegal("R funct7=0100000 con funct3=111 (no existe)", OP_R, 3'b111, 7'b0100000);
+        check_illegal("slli con funct7=0100000",   OP_IMM,    3'b001, 7'b0100000);
+        check_illegal("srli/srai con funct7=0000001", OP_IMM, 3'b101, 7'b0000001);
+        check_illegal("ld   (load funct3=011)",    OP_LOAD,   3'b011, 7'b0000000);
+        check_illegal("lwu  (load funct3=110)",    OP_LOAD,   3'b110, 7'b0000000);
+        check_illegal("sd   (store funct3=011)",   OP_STORE,  3'b011, 7'b0000000);
+        check_illegal("jalr con funct3=001",       OP_JALR,   3'b001, 7'b0000000);
+
+        $display("\n--- Las validas que comparten opcode siguen andando ---");
+        check_legal("sub  (R funct7=0100000, funct3=000)", OP_R,   3'b000, 7'b0100000);
+        check_legal("sra  (R funct7=0100000, funct3=101)", OP_R,   3'b101, 7'b0100000);
+        check_legal("srai (I funct7=0100000, funct3=101)", OP_IMM, 3'b101, 7'b0100000);
+        check_legal("addi con imm negativo (instr[31:25]=1111111)", OP_IMM, 3'b000, 7'b1111111);
+        check_legal("lhu  (load funct3=101)",  OP_LOAD,   3'b101, 7'b0000000);
+        check_legal("sw   (store funct3=010)", OP_STORE,  3'b010, 7'b0000000);
+        check_legal("bne  (branch funct3=001)", OP_BRANCH, 3'b001, 7'b0000000);
 
         $display("\n========================================");
         $display("Resultado: %0d EXITO / %0d FALLO", pass_count, fail_count);

@@ -13,14 +13,24 @@
 //   dump_unit.v   -> lado Tx del Interface Circuit (volcado de estado).
 //   riscv_core.v  -> el pipeline en sí.
 //
-// Reset: 'rst_i' (físico, botón de la placa) resetea la UART, debug_unit y
-// dump_unit directamente. riscv_core.v en cambio recibe 'core_rst' = 'rst_i'
-// OR 'core_soft_reset' (generado por debug_unit en cada CMD_LOAD_*/
-// CMD_RESET) -- debug_unit/dump_unit NUNCA deben resetearse a sí mismos
-// con la señal que ellos mismos generan para resetear al core (si no,
-// debug_unit perdería su propio estado de FSM a mitad de una carga). Ni
-// acá ni en ningún lado de este árbol se gatea el clock: todo control de
-// flujo es reset síncrono o enable, tal como pide el enunciado.
+// Reset: todos los flip-flops del diseño usan reset ASÍNCRONO (en la lista
+// de sensibilidad), con la regla clásica "se activa en forma asíncrona, se
+// libera en forma síncrona":
+//   - 'rst_i' (físico, botón de la placa) no se usa directo: pasa por un
+//     sincronizador de 2 flip-flops ('rst_sync'). Se activa al instante,
+//     pero se libera alineado al clock, así todos los flip-flops salen de
+//     reset en el mismo ciclo (si el botón se soltara cerca de un flanco,
+//     unos podrían salir un ciclo antes que otros, o quedar metaestables).
+//     'rst_sync' resetea la UART, debug_unit y dump_unit.
+//   - riscv_core.v recibe 'core_rst' = 'rst_sync' OR 'core_soft_reset'
+//     (generado por debug_unit en cada CMD_LOAD_*/CMD_RESET). Las dos
+//     señales salen de flip-flops, nunca de lógica combinacional: un
+//     glitch sobre un reset asíncrono resetea de verdad (ver debug_unit.v).
+// debug_unit/dump_unit NUNCA deben resetearse a sí mismos con la señal que
+// ellos mismos generan para resetear al core (si no, debug_unit perdería
+// su propio estado de FSM a mitad de una carga). Ni acá ni en ningún lado
+// de este árbol se gatea el clock: todo control de flujo es reset o
+// enable, tal como pide el enunciado.
 //
 // Único punto de entrada/salida físico: 'rx_i'/'tx_o' (además de clock,
 // reset y 'baud_sel_i', igual que uart_alu_top.v). CLK_FREQ=100MHz por
@@ -57,6 +67,14 @@ module riscv_uart_top #(
     assign dp_o  = 1'b1;
     assign an_o  = 4'b1111;
 
+    // --- Sincronizador de reset (activación asíncrona, liberación síncrona) ---
+    reg [1:0] rst_sync_reg;
+    always @(posedge clk_i, posedge rst_i) begin
+        if (rst_i) rst_sync_reg <= 2'b11;
+        else       rst_sync_reg <= {rst_sync_reg[0], 1'b0};
+    end
+    wire rst_sync = rst_sync_reg[1];
+
     // --- Base de tiempos ---
     wire s_tick;
     baud_rate_generator #(
@@ -68,7 +86,7 @@ module riscv_uart_top #(
         .OVERSAMPLE (16)
     ) u_baud_gen (
         .clk_i      (clk_i),
-        .rst_i      (rst_i),
+        .rst_i      (rst_sync),
         .baud_sel_i (baud_sel_i),
         .tick_o     (s_tick)
     );
@@ -86,7 +104,7 @@ module riscv_uart_top #(
         .SB_TICKS (SB_TICKS)
     ) u_uart_rx (
         .clk_i          (clk_i),
-        .rst_i          (rst_i),
+        .rst_i          (rst_sync),
         .rx_i           (rx_i),
         .s_tick_i       (s_tick),
         .parity_en_i    (1'b0),
@@ -104,7 +122,7 @@ module riscv_uart_top #(
         .SB_TICKS (SB_TICKS)
     ) u_uart_tx (
         .clk_i          (clk_i),
-        .rst_i          (rst_i),
+        .rst_i          (rst_sync),
         .tx_start_i     (tx_start),
         .s_tick_i       (s_tick),
         .din_i          (tx_din),
@@ -124,7 +142,7 @@ module riscv_uart_top #(
         .DBIT (8)
     ) u_interface (
         .clk_i          (clk_i),
-        .rst_i          (rst_i),
+        .rst_i          (rst_sync),
         .rx_dout_i      (rx_dout),
         .rx_done_tick_i (rx_done_tick),
         .tx_done_tick_i (tx_done_tick),
@@ -140,7 +158,7 @@ module riscv_uart_top #(
 
     // --- Reset combinado hacia el core (nunca hacia debug_unit/dump_unit) ---
     wire core_soft_reset;
-    wire core_rst = rst_i | core_soft_reset;
+    wire core_rst = rst_sync | core_soft_reset;
 
     // --- Señales de carga (Debug Unit -> riscv_core) ---
     wire         imem_load_en, imem_load_clear, imem_load_clear_busy;
@@ -156,7 +174,11 @@ module riscv_uart_top #(
     wire [32*32-1:0] regs_flat;
     wire             branch_taken;
     wire             pc_write_en;
+    wire             hazard_stall;
+    wire [7:0]       fwd_sel;
     wire [31:0]      cycle_count;
+
+    wire [31:0] if_pc, if_instr;
 
     wire [31:0] if_id_pc, if_id_instr;
 
@@ -178,7 +200,7 @@ module riscv_uart_top #(
     wire dump_trigger, dump_done;
 
     debug_unit u_debug (
-        .clk_i(clk_i), .rst_i(rst_i), // reset FISICO: ver header
+        .clk_i(clk_i), .rst_i(rst_sync), // reset FISICO (sincronizado), nunca el soft-reset: ver header
         .r_data_i(r_data), .rx_empty_i(rx_empty), .rd_o(rd),
         .imem_load_en_o(imem_load_en), .imem_load_addr_o(imem_load_addr),
         .imem_load_data_o(imem_load_data), .imem_load_clear_o(imem_load_clear),
@@ -205,7 +227,9 @@ module riscv_uart_top #(
         .dmem_dbg_addr_i(dmem_dbg_addr), .dmem_dbg_rdata_o(dmem_dbg_rdata),
         .regs_flat_o(regs_flat), .core_halted_o(core_halted),
         .branch_taken_o(branch_taken), .pc_write_en_o(pc_write_en),
+        .hazard_stall_o(hazard_stall), .fwd_sel_o(fwd_sel),
         .cycle_count_o(cycle_count),
+        .if_pc_o(if_pc), .if_instr_o(if_instr),
         .if_id_pc_o(if_id_pc), .if_id_instr_o(if_id_instr),
         .id_ex_pc_o(id_ex_pc), .id_ex_instr_o(id_ex_instr),
         .id_ex_rs1_data_o(id_ex_rs1_data), .id_ex_rs2_data_o(id_ex_rs2_data), .id_ex_imm_o(id_ex_imm),
@@ -226,10 +250,12 @@ module riscv_uart_top #(
     dump_unit #(
         .DMEM_DEPTH_WORDS(DMEM_DEPTH_WORDS)
     ) u_dump (
-        .clk_i(clk_i), .rst_i(rst_i), // reset FISICO: ver header
+        .clk_i(clk_i), .rst_i(rst_sync), // reset FISICO (sincronizado), nunca el soft-reset: ver header
         .dump_trigger_i(dump_trigger), .dump_done_o(dump_done),
         .core_halted_i(core_halted), .branch_taken_i(branch_taken), .pc_write_en_i(pc_write_en),
+        .hazard_stall_i(hazard_stall), .fwd_sel_i(fwd_sel),
         .cycle_count_i(cycle_count),
+        .if_pc_i(if_pc), .if_instr_i(if_instr),
         .if_id_pc_i(if_id_pc), .if_id_instr_i(if_id_instr),
         .id_ex_pc_i(id_ex_pc), .id_ex_instr_i(id_ex_instr),
         .id_ex_rs1_data_i(id_ex_rs1_data), .id_ex_rs2_data_i(id_ex_rs2_data), .id_ex_imm_i(id_ex_imm),

@@ -17,8 +17,28 @@
 // clock (enunciado): 'core_soft_reset_o' (se OR-ea con el reset físico de
 // la placa en riscv_uart_top.v) y 'core_stall_o' (-> global_stall_i). Por
 // default 'core_stall_o' vale 1 (el core arranca y queda frenado entre
-// comandos): sólo se libera durante CMD_RUN (hasta halt) y CMD_STEP
-// (exactamente 1 ciclo).
+// comandos): sólo se libera durante CMD_RUN (hasta halt o hasta una
+// pausa) y CMD_STEP (exactamente 1 ciclo), y nunca con el core ya
+// detenido (HALT en WB): una vez terminado el programa, ni RUN ni STEP
+// lo hacen avanzar, así el volcado y CYCLE_COUNT quedan fijos.
+//
+// 'core_soft_reset_o' sale de un FLIP-FLOP, no de la lógica combinacional
+// de la FSM: maneja el reset ASÍNCRONO de todo el core, y una salida
+// combinacional decodificada de 'state_reg' puede tener glitches mientras
+// los bits de estado cambian (p.ej. DUMP_WAIT=1100 -> RECV_CMD=0000 puede
+// pasar un instante por 0100 o 1000, que son estados de carga). Un glitch
+// sobre un reset asíncrono resetea el core de verdad. Se registra a partir
+// de 'state_next', así que el pulso queda alineado exactamente con los
+// mismos ciclos que antes. Las demás salidas hacia el core sí pueden ser
+// combinacionales: son enables síncronos, sólo importa su valor en el
+// flanco (y eso lo verifica el análisis de timing).
+//
+// Pausa de CMD_RUN: un programa sin HALT alcanzable (p.ej. un loop
+// infinito) nunca terminaría el modo continuo. Por eso, en RUN_EXEC,
+// cualquier byte que llegue por la UART detiene la ejecución: se consume,
+// se descarta y se dispara el volcado (con core_halted=0, así el host sabe
+// que fue una pausa). El host usa CMD_BREAK por convención, que en
+// cualquier otro estado es un comando desconocido y se descarta.
 //
 // CMD_LOAD_PROG y CMD_LOAD_DATA comparten los mismos estados de recepción
 // (LOAD_*): 'load_target_reg' (0=imem, 1=dmem), fijado al decodificar el
@@ -65,6 +85,8 @@ module debug_unit (
     localparam [7:0] CMD_STEP      = 8'h21;
     localparam [7:0] CMD_DUMP      = 8'h22;
     localparam [7:0] CMD_RESET     = 8'h23;
+    // CMD_BREAK (8'h24) no se decodifica en RECV_CMD a propósito: durante
+    // RUN_EXEC cualquier byte pausa, y fuera de RUN_EXEC cae en 'default'.
 
     localparam [3:0]
         RECV_CMD       = 4'd0,
@@ -89,24 +111,42 @@ module debug_unit (
     reg [31:0] load_addr_reg, load_addr_next;
     reg [31:0] word_acc_reg, word_acc_next;          // acumulador del word actual, byte a byte (LE)
 
+    // Estados en los que el core se mantiene en soft-reset: toda la carga
+    // de un programa/datos, y el pulso de CMD_RESET.
+    function soft_reset_state;
+        input [3:0] s;
+        begin
+            case (s)
+                LOAD_CLEAR, LOAD_CLEAR_WAIT, LOAD_SZ_LO, LOAD_SZ_HI,
+                LOAD_B0, LOAD_B1, LOAD_B2, LOAD_B3, LOAD_WRITE,
+                RST_PULSE: soft_reset_state = 1'b1;
+                default:   soft_reset_state = 1'b0;
+            endcase
+        end
+    endfunction
+
     // Registro de estado (memoria). 'rst_i' acá es el reset FISICO de la
     // placa (o el testbench), nunca 'core_soft_reset_o' -- la FSM de la
     // Debug Unit tiene que seguir sabiendo en qué estado de carga está
     // incluso mientras ella misma sostiene el soft-reset del core.
     always @(posedge clk_i, posedge rst_i) begin
         if (rst_i) begin
-            state_reg       <= RECV_CMD;
-            load_target_reg <= 1'b0;
-            word_count_reg  <= 16'b0;
-            load_addr_reg   <= 32'b0;
-            word_acc_reg    <= 32'b0;
+            state_reg         <= RECV_CMD;
+            load_target_reg   <= 1'b0;
+            word_count_reg    <= 16'b0;
+            load_addr_reg     <= 32'b0;
+            word_acc_reg      <= 32'b0;
+            core_soft_reset_o <= 1'b0;
         end
         else begin
-            state_reg       <= state_next;
-            load_target_reg <= load_target_next;
-            word_count_reg  <= word_count_next;
-            load_addr_reg   <= load_addr_next;
-            word_acc_reg    <= word_acc_next;
+            state_reg         <= state_next;
+            load_target_reg   <= load_target_next;
+            word_count_reg    <= word_count_next;
+            load_addr_reg     <= load_addr_next;
+            word_acc_reg      <= word_acc_next;
+            // Registrado (ver header): vale 1 exactamente mientras
+            // state_reg está en un estado de soft-reset, sin glitches.
+            core_soft_reset_o <= soft_reset_state(state_next);
         end
     end
 
@@ -128,7 +168,6 @@ module debug_unit (
         dmem_load_addr_o   = load_addr_reg;
         dmem_load_data_o   = word_acc_reg;
         dmem_load_clear_o  = 1'b0;
-        core_soft_reset_o  = 1'b0;
         core_stall_o       = 1'b1; // por defecto frenado; sólo se libera en RUN_EXEC/STEP_EXEC
         dump_trigger_o     = 1'b0;
 
@@ -156,14 +195,14 @@ module debug_unit (
 
             // Limpia la memoria destino completa (no sólo lo que se va a
             // escribir) y sostiene el soft-reset del core mientras dure
-            // toda la carga -- ver tp3/docs/debug_protocol.md. El pulso de
+            // toda la carga (soft_reset_state() incluye todos los LOAD_*)
+            // -- ver tp3/docs/debug_protocol.md. El pulso de
             // clear dispara un barrido de varios ciclos dentro de
             // imem.v/dmem.v (una dirección por ciclo, ver esos archivos);
             // LOAD_CLEAR_WAIT espera a que termine antes de recibir el
             // tamaño del programa, para no empezar a escribirlo mientras
             // el barrido todavía está limpiando direcciones.
             LOAD_CLEAR: begin
-                core_soft_reset_o = 1'b1;
                 imem_load_clear_o = ~load_target_reg;
                 dmem_load_clear_o = load_target_reg;
                 load_addr_next     = 32'b0;
@@ -171,13 +210,11 @@ module debug_unit (
             end
 
             LOAD_CLEAR_WAIT: begin
-                core_soft_reset_o = 1'b1;
                 if (~(load_target_reg ? dmem_clear_busy_i : imem_clear_busy_i))
                     state_next = LOAD_SZ_LO;
             end
 
             LOAD_SZ_LO: begin
-                core_soft_reset_o = 1'b1;
                 if (~rx_empty_i) begin
                     rd_o             = 1'b1;
                     word_count_next  = {word_count_reg[15:8], r_data_i};
@@ -186,7 +223,6 @@ module debug_unit (
             end
 
             LOAD_SZ_HI: begin
-                core_soft_reset_o = 1'b1;
                 if (~rx_empty_i) begin
                     rd_o = 1'b1;
                     word_count_next = {r_data_i, word_count_reg[7:0]};
@@ -195,7 +231,6 @@ module debug_unit (
             end
 
             LOAD_B0: begin
-                core_soft_reset_o = 1'b1;
                 if (~rx_empty_i) begin
                     rd_o = 1'b1;
                     word_acc_next = {word_acc_reg[31:8], r_data_i};
@@ -204,7 +239,6 @@ module debug_unit (
             end
 
             LOAD_B1: begin
-                core_soft_reset_o = 1'b1;
                 if (~rx_empty_i) begin
                     rd_o = 1'b1;
                     word_acc_next = {word_acc_reg[31:16], r_data_i, word_acc_reg[7:0]};
@@ -213,7 +247,6 @@ module debug_unit (
             end
 
             LOAD_B2: begin
-                core_soft_reset_o = 1'b1;
                 if (~rx_empty_i) begin
                     rd_o = 1'b1;
                     word_acc_next = {word_acc_reg[31:24], r_data_i, word_acc_reg[15:0]};
@@ -222,7 +255,6 @@ module debug_unit (
             end
 
             LOAD_B3: begin
-                core_soft_reset_o = 1'b1;
                 if (~rx_empty_i) begin
                     rd_o = 1'b1;
                     word_acc_next = {r_data_i, word_acc_reg[23:0]};
@@ -231,7 +263,6 @@ module debug_unit (
             end
 
             LOAD_WRITE: begin
-                core_soft_reset_o = 1'b1;
                 imem_load_en_o    = ~load_target_reg;
                 imem_load_addr_o  = load_addr_reg;
                 imem_load_data_o  = word_acc_reg;
@@ -244,12 +275,25 @@ module debug_unit (
             end
 
             RUN_EXEC: begin
-                core_stall_o = 1'b0;
-                if (core_halted_i) state_next = DUMP_TRIG;
+                // Con el HALT ya en WB el core no avanza ni un ciclo más:
+                // CYCLE_COUNT queda exactamente en el ciclo en que terminó.
+                core_stall_o = core_halted_i;
+                if (core_halted_i) begin
+                    state_next = DUMP_TRIG;
+                end
+                else if (~rx_empty_i) begin
+                    // Pausa (ver header): el byte se consume y se descarta.
+                    // Si coincide con el HALT, gana el HALT y el byte queda
+                    // para RECV_CMD, que lo descarta como desconocido.
+                    rd_o       = 1'b1;
+                    state_next = DUMP_TRIG;
+                end
             end
 
             STEP_EXEC: begin
-                core_stall_o = 1'b0; // se libera exactamente 1 ciclo
+                // Se libera exactamente 1 ciclo, salvo que el core ya esté
+                // detenido: ahí el STEP es un no-op real (sólo vuelca).
+                core_stall_o = core_halted_i;
                 state_next    = DUMP_TRIG;
             end
 
@@ -263,8 +307,7 @@ module debug_unit (
             end
 
             RST_PULSE: begin
-                core_soft_reset_o = 1'b1;
-                state_next          = RECV_CMD;
+                state_next = RECV_CMD; // el pulso lo da soft_reset_state()
             end
 
             default: state_next = RECV_CMD;

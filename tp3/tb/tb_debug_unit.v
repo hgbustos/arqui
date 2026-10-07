@@ -8,8 +8,11 @@
 // (eso lo hace tb_riscv_uart_top.v, end-to-end). Cubre: CMD_LOAD_PROG y
 // CMD_LOAD_DATA completos (clear + N palabras a la memoria correcta, con
 // soft-reset sostenido durante toda la carga), N=0 (sólo clear, sin
-// escrituras), CMD_RUN (stall liberado hasta halt, dump disparado),
-// CMD_STEP (stall liberado exactamente 1 ciclo), CMD_DUMP (dump inmediato
+// escrituras), CMD_RUN (stall liberado hasta halt -- y ni un ciclo más --,
+// dump disparado), la pausa de CMD_RUN (cualquier byte detiene un
+// programa sin HALT; si coincide con el HALT, gana el HALT y el byte se
+// descarta después), CMD_STEP (stall liberado exactamente 1 ciclo, y
+// nunca sobre un core ya detenido), CMD_DUMP (dump inmediato
 // sin liberar el stall), CMD_RESET (pulso de soft-reset sin dump) y un
 // comando desconocido (se descarta, sin efecto).
 // =============================================================================
@@ -21,6 +24,7 @@ module tb_debug_unit;
     localparam [7:0] CMD_STEP      = 8'h21;
     localparam [7:0] CMD_DUMP      = 8'h22;
     localparam [7:0] CMD_RESET     = 8'h23;
+    localparam [7:0] CMD_BREAK     = 8'h24;
 
     parameter CLK_PERIOD = 10;
     reg tb_clk, tb_rst;
@@ -184,12 +188,16 @@ module tb_debug_unit;
         // 1 ciclo extra: LOAD_CLEAR_WAIT espera a que imem_clear_busy_i
         // baje (acá, instantáneo) antes de pasar a recibir el tamaño.
         @(posedge tb_clk); #1;
+        // El soft-reset es registrado (sale de un flip-flop, ver
+        // debug_unit.v): tiene que cubrir la misma ventana que antes.
+        check("soft-reset sostenido mientras se recibe la carga", tb_soft_reset, 1'b1);
         send_byte(8'h02); send_byte(8'h00); // N=2, little-endian
         // palabra 0 = 0x11223344
         send_byte(8'h44); send_byte(8'h33); send_byte(8'h22); send_byte(8'h11);
         // palabra 1 = 0xAABBCCDD
         send_byte(8'hDD); send_byte(8'hCC); send_byte(8'hBB); send_byte(8'hAA);
         #(CLK_PERIOD);
+        check("soft-reset liberado al terminar la carga", tb_soft_reset, 1'b0);
         check("imem_load_clear_o pulso exactamente 1 vez", imem_clear_count, 1);
         check("dmem_load_clear_o nunca (target=imem)", dmem_clear_count, 0);
         check("imem_load_en_o pulso 2 veces (2 palabras)", imem_en_count, 2);
@@ -235,12 +243,51 @@ module tb_debug_unit;
         check("CMD_RUN: sigue liberado (todavia sin halt)", tb_stall, 1'b0);
         tb_core_halted = 1;
         #1;
+        check("CMD_RUN: con el HALT en WB el core no avanza ni un ciclo mas", tb_stall, 1'b1);
         @(posedge tb_clk); #1;
         check("CMD_RUN: dump_trigger_o se dispara al ver halt", tb_dump_trigger, 1'b1);
         finish_dump;
         #1;
         check("CMD_RUN: stall vuelve a 1 despues del dump", tb_stall, 1'b1);
         tb_core_halted = 0;
+
+        // ================================================================
+        $display("\n===== CMD_RUN + pausa: un byte detiene un programa sin HALT =====");
+        // ================================================================
+        send_byte(CMD_RUN);
+        #(CLK_PERIOD*5);
+        check("pausa: el programa sigue corriendo sin HALT", tb_stall, 1'b0);
+        tb_r_data = CMD_BREAK; tb_rx_empty = 0;
+        #1;
+        check("pausa: RUN_EXEC consume el byte (rd_o=1)", tb_rd, 1'b1);
+        @(posedge tb_clk); #1;
+        tb_rx_empty = 1;
+        check("pausa: dispara el volcado", tb_dump_trigger, 1'b1);
+        check("pausa: el core vuelve a congelarse", tb_stall, 1'b1);
+        finish_dump;
+        dispatch_cmd(CMD_DUMP);
+        #1;
+        check("pausa: el FSM queda listo para el proximo comando", tb_dump_trigger, 1'b1);
+        finish_dump;
+
+        // ================================================================
+        $display("\n===== CMD_RUN: si la pausa coincide con el HALT, gana el HALT =====");
+        // ================================================================
+        send_byte(CMD_RUN);
+        tb_core_halted = 1; tb_r_data = CMD_BREAK; tb_rx_empty = 0;
+        #1;
+        check("HALT+pausa: el byte NO se consume en RUN_EXEC", tb_rd, 1'b0);
+        @(posedge tb_clk); #1;
+        check("HALT+pausa: dispara el volcado por el HALT", tb_dump_trigger, 1'b1);
+        finish_dump;
+        tb_core_halted = 0;
+        // El byte quedo pendiente: RECV_CMD lo lee y lo descarta como
+        // comando desconocido (CMD_BREAK no es un comando fuera de RUN).
+        @(posedge tb_clk); #1;
+        tb_rx_empty = 1;
+        #(CLK_PERIOD*3);
+        check("HALT+pausa: el byte tardio se descarta sin volcado", tb_dump_trigger, 1'b0);
+        check("HALT+pausa: el byte tardio no libera el stall", tb_stall, 1'b1);
 
         // ================================================================
         $display("\n===== CMD_STEP: libera stall exactamente 1 ciclo =====");
@@ -252,6 +299,18 @@ module tb_debug_unit;
         check("CMD_STEP: stall vuelve a 1 al ciclo siguiente", tb_stall, 1'b1);
         check("CMD_STEP: dump_trigger_o se dispara", tb_dump_trigger, 1'b1);
         finish_dump;
+
+        // ================================================================
+        $display("\n===== CMD_STEP sobre un core detenido: no-op (solo vuelca) =====");
+        // ================================================================
+        tb_core_halted = 1;
+        dispatch_cmd(CMD_STEP);
+        #1;
+        check("STEP con HALT en WB: el stall NO se libera", tb_stall, 1'b1);
+        @(posedge tb_clk); #1;
+        check("STEP con HALT en WB: igual dispara el volcado", tb_dump_trigger, 1'b1);
+        finish_dump;
+        tb_core_halted = 0;
 
         // ================================================================
         $display("\n===== CMD_DUMP: dispara dump sin liberar el stall =====");

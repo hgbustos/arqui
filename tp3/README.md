@@ -5,22 +5,20 @@ sigue. Para la justificación de cada decisión de diseño (por qué se
 resuelven los saltos en ID, por qué HALT es un opcode custom, etc.) ver
 **`tp3/informe.md`** — este README no la repite.
 
-## Estado (actualizado 2026-10-04)
+## Estado (actualizado 2026-10-07)
 
 | Fase | Contenido | Estado |
 |---|---|---|
-| 1 | Datapath del pipeline (`rtl/core/`) | ✅ 300 tests |
-| 2 | Debug Unit + Dump Unit + top UART (`rtl/debug/`) | ✅ 96 tests (+162 de regresión de la ALU de TP1) |
-| 3 | Ensamblador + protocolo + CLI + GUI (`host/`) | ✅ 61 tests |
-| 4 | Proyecto Vivado, síntesis, timing closure | 🟡 constraints listos (`constraints/riscv_uart_top.xdc`) — falta crear el proyecto y correr síntesis, ver `synt/README.md` |
+| 1 | Datapath del pipeline (`rtl/core/`) | ✅ 375 tests |
+| 2 | Debug Unit + Dump Unit + top UART (`rtl/debug/`) | ✅ 127 tests (+162 de regresión de la ALU de TP1) |
+| 3 | Ensamblador + protocolo + CLI + GUI (`host/`) | ✅ 86 tests |
+| 4 | Proyecto Vivado, síntesis, timing closure | 🟡 proyecto creado (`synt/project_1/`) y primera síntesis+implementación corrida (informe §3.6, §3.8). Falta: re-sintetizar con los cambios de RTL, aplicar el Clock Wizard a 50MHz y responder lo del skew — ver `synt/README.md` |
 | 5 | Validación en una Basys 3 real | ⬜ pendiente — necesita la placa |
 
-**Verilog: 558/558 tests pasando**, 0 fallos, corridos el 2026-10-04
-con Icarus Verilog 12 (los 15 testbenches de abajo). **Python: 61
-tests**, cuya última corrida registrada es del 2026-08-18; no se
-volvieron a correr después de los cambios del 2026-09-15 en `host/`.
-Todo lo de las Fases 1-3 está verificado en **simulación** y con
-**tests unitarios** de Python — nada se corrió todavía en un FPGA real.
+**750/750 tests pasando** (664 Verilog + 86 Python), 0 fallos, corridos
+el 2026-10-07 con Icarus Verilog 12 y Python 3.12. Todo lo de las Fases
+1-3 está verificado en **simulación** y con **tests unitarios** de Python
+— nada se corrió todavía en un FPGA real.
 
 ## Estructura de archivos
 
@@ -33,8 +31,10 @@ tp3/
 ├── rtl/
 │   ├── core/      12 módulos: el datapath del pipeline (Fase 1)
 │   └── debug/     debug_unit.v, dump_unit.v, riscv_uart_top.v (Fase 2)
-├── tb/            14 testbenches (uno por módulo + 2 de integración) + riscv_isa_encode.vh
-├── host/          riscv_asm.py, riscv_protocol.py, riscv_client.py, riscv_gui.py + tests (Fase 3)
+├── tb/            15 testbenches (uno por módulo + 2 de integración + el generador de la
+│                  traza de la GUI, tb_pipeline_trace.v) + riscv_isa_encode.vh
+├── host/          riscv_asm.py, riscv_protocol.py, riscv_client.py, riscv_pipeview.py,
+│                  riscv_gui.py + tests, y testdata/pipeline_trace.hex (Fase 3)
 ├── constraints/   riscv_uart_top.xdc (Fase 4, ver abajo)
 ├── synt/          README.md con el checklist de Vivado -- el proyecto en sí se crea ahí
 ├── informe.md     reporte completo, decisiones de diseño justificadas
@@ -67,6 +67,12 @@ iverilog -g2012 -I tp3/tb -o /tmp/tb.vvp tp1/ALU.v tp3/rtl/core/*.v tp3/tb/<nomb
 iverilog -g2012 -o /tmp/tb.vvp tp3/rtl/debug/debug_unit.v tp3/rtl/debug/dump_unit.v tp3/tb/tb_debug_unit.v && vvp /tmp/tb.vvp
 iverilog -g2012 -o /tmp/tb.vvp tp3/rtl/debug/debug_unit.v tp3/rtl/debug/dump_unit.v tp3/tb/tb_dump_unit.v && vvp /tmp/tb.vvp
 
+# Traza paso a paso para los tests de la GUI (correr desde la raiz del repo:
+# regenera tp3/host/testdata/pipeline_trace.hex; si cambia el RTL y el
+# archivo cambia, git lo muestra)
+iverilog -g2012 -I tp3/tb -o /tmp/tb.vvp tp1/ALU.v tp3/rtl/core/*.v tp3/rtl/debug/dump_unit.v \
+  tp3/tb/tb_pipeline_trace.v && vvp /tmp/tb.vvp
+
 # Integracion de punta a punta (banguea UART real bit a bit, tarda unos segundos)
 iverilog -g2012 -I tp3/tb -o /tmp/tb.vvp tp1/ALU.v tp2/rtl/baud_generator.v tp2/rtl/uart_rx.v \
   tp2/rtl/uart_tx.v tp2/rtl/uart_interface.v tp3/rtl/core/*.v tp3/rtl/debug/*.v \
@@ -81,15 +87,22 @@ Cada corrida termina con una línea `Resultado: N EXITO / 0 FALLO`.
 cd tp3/host
 pip install -r requirements.txt   # solo pyserial
 
-py test_riscv_asm.py -v        # 41 tests: ensamblador + desensamblador
-py test_riscv_protocol.py -v   # 19 tests: framing del protocolo
-py test_riscv_client.py -v     # 1 test: CLI de punta a punta con un puerto serie simulado
+py test_riscv_asm.py -v        # 42 tests: ensamblador + desensamblador
+py test_riscv_protocol.py -v   # 24 tests: framing del protocolo + tamaño contra imem/dmem
+py test_riscv_client.py -v     # 5 tests: CLI de punta a punta con un puerto serie simulado (HALT, pausa, paso a paso, programa/datos que no entran)
+py test_riscv_pipeview.py -v   # 15 tests: vista de pipeline de la GUI contra la traza real del RTL
 ```
 
 Probar el ensamblador a mano:
 
 ```bash
 py -c "from riscv_asm import assemble; print([hex(w) for w in assemble('addi x1, x0, 10')])"
+```
+
+Ver el diagrama multiciclo de la traza real, sin hardware:
+
+```bash
+py -c "from riscv_pipeview import *; h = PipelineHistory(); [h.push(s) for s in load_trace('testdata/pipeline_trace.hex', 4)]; print(render_text(h))"
 ```
 
 Abrir la GUI (sin hardware conectado, sólo para ver que levanta):
@@ -126,7 +139,10 @@ leer Worst Negative Slack, qué hacer si no cierra a 100MHz).
   de `riscv_uart_top.v`, default 256) y la herramienta de host
   (`--dmem-words` en la CLI / spinbox en la GUI, default 256). Si no
   coinciden, `parse_dump` tira `ProtocolError` por tamaño de paquete
-  incorrecto.
+  incorrecto. Lo mismo con `IMEM_DEPTH_WORDS` (default 1024,
+  `--imem-words` en la CLI): el host rechaza un programa o unos datos que
+  no entran antes de mandarlos, porque el hardware no avisaría (la
+  dirección da la vuelta y pisa el principio de la memoria).
 - **`register_file.v` tiene un bypass de escritura-lectura** interno
   (mismo ciclo). Es necesario para que un productor exactamente 3
   instrucciones antes de su consumidor funcione — ver informe §3.5 antes

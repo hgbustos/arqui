@@ -16,6 +16,8 @@
 //   4) LUI + JAL/JALR (valor de enlace + target) 8) Load-antes-de-branch (0-gap y 1-gap)
 //                                                  9) HALT explícito e implícito
 //  10) Modo paso a paso (global_stall_i): el freeze es una pausa perfecta
+//  11) Decodificación completa (blt/mul -> HALT implícito) y load-use sin
+//      stalls espurios (CYCLE_COUNT exacto con y sin dependencia real)
 //
 // Los programas 1-9 se corren de punta a punta hasta HALT (no se
 // inspecciona ciclo a ciclo): si el valor final de un registro es el
@@ -40,8 +42,12 @@ module tb_riscv_core;
     wire core_halted;
     wire branch_taken, pc_write_en;
     wire [31:0] cycle_count;
+    wire hazard_stall;           // seccion 12
+    wire [7:0] fwd_sel;          // seccion 12: {fwd_b_id, fwd_a_id, fwd_b_ex, fwd_a_ex}
+    wire [31:0] if_pc, if_instr; // seccion 12
 
     integer pass_count, fail_count;
+    reg [31:0] cycles_no_dep; // seccion 11b
 
     initial tb_clk = 0;
     always #(CLK_PERIOD/2) tb_clk = ~tb_clk;
@@ -66,7 +72,11 @@ module tb_riscv_core;
         .core_halted_o   (core_halted),
         .branch_taken_o  (branch_taken),
         .pc_write_en_o   (pc_write_en),
-        .cycle_count_o   (cycle_count)
+        .cycle_count_o   (cycle_count),
+        .hazard_stall_o  (hazard_stall),
+        .fwd_sel_o       (fwd_sel),
+        .if_pc_o         (if_pc),
+        .if_instr_o      (if_instr)
     );
 
     // ------------------------------------------------------------------
@@ -180,6 +190,18 @@ module tb_riscv_core;
             end else begin
                 fail_count = fail_count + 1;
                 $error("  -> FALLO | %0s: mem[%0d] esperado=0x%08h, recibido=0x%08h", label, word_idx, expected, got);
+            end
+        end
+    endtask
+
+    // Avanza (con el núcleo libre) hasta que el contador de ciclos valga 'k':
+    // deja el estado tal como lo vería un volcado tras k CMD_STEP.
+    task wait_cycle;
+        input [31:0] k;
+        begin
+            while (cycle_count < k) begin
+                @(posedge tb_clk);
+                #1;
             end
         end
     endtask
@@ -499,6 +521,10 @@ module tb_riscv_core;
         prog_len = 3;
         load_program; run_until_halt;
         check_reg("halt explicito detiene antes del resto", 1, 32'd42);
+        // Lo que retiene el HALT es IF/ID congelado; el PC queda en la
+        // instruccion siguiente (HALT+4), que se busca pero nunca entra.
+        check_val("PC queda en HALT+4 (addr 8)",          uut.pc_reg,    32'd8);
+        check_val("IF/ID retiene el HALT (pc del HALT=4)", uut.if_id_pc, 32'd4);
 
         // ================================================================
         $display("\n===== 9b) HALT implicito (sin instruccion de parada) =====");
@@ -634,6 +660,117 @@ module tb_riscv_core;
         check_reg("load justo antes del branch",                   8, 32'd3);
         check_reg("beq tomado no ejecuta lo saltado",              9, 32'h0);
         check_mem("store del loop",                                2, 32'd3);
+
+        // ================================================================
+        $display("\n===== 11a) Opcode conocido pero instruccion fuera del subset -> HALT implicito =====");
+        // ================================================================
+        // blt comparte opcode con beq/bne y branch_unit solo mira
+        // funct3[0]: sin validar funct3 en control_unit, este blt se
+        // ejecutaria en silencio como un beq (1==3 falso -> no salta ->
+        // x3=7). Tiene que frenar el core en el lugar, como cualquier otra
+        // instruccion que no esta en el enunciado.
+        tb_global_stall = 0; // la seccion 10 lo deja en 1 (paso a paso)
+        prog_mem[0] = i_addi(1, 0, 1);
+        prog_mem[1] = i_addi(2, 0, 3);
+        prog_mem[2] = enc_b(13'd8, 5'd2, 5'd1, 3'b100, 7'b1100011); // blt x1, x2, +8
+        prog_mem[3] = i_addi(3, 0, 7);   // no se ejecuta (ni como fallthrough de un "beq")
+        prog_mem[4] = i_addi(4, 0, 9);   // no se ejecuta (ni como destino de un blt tomado)
+        prog_mem[5] = i_halt(0);
+        prog_len = 6;
+        load_program; run_until_halt;
+        check_reg("blt: lo anterior se completo (x1)", 1, 32'd1);
+        check_reg("blt: lo anterior se completo (x2)", 2, 32'd3);
+        check_reg("blt: no siguio como beq (x3)",      3, 32'd0);
+        check_reg("blt: no salto (x4)",                4, 32'd0);
+        check_val("blt: la instruccion que freno es la propia blt (MEM/WB.instr)",
+                  uut.mem_wb_instr, prog_mem[2]);
+        check_val("blt: IF/ID la retiene (pc=8)", uut.if_id_pc, 32'd8);
+
+        // mul (extension M, funct7=0000001): sin validar funct7 se
+        // ejecutaria como add (6+7=13).
+        prog_mem[0] = i_addi(1, 0, 6);
+        prog_mem[1] = i_addi(2, 0, 7);
+        prog_mem[2] = enc_r(7'b0000001, 5'd2, 5'd1, 3'b000, 5'd5, 7'b0110011); // mul x5, x1, x2
+        prog_mem[3] = i_addi(6, 0, 1);   // no se ejecuta
+        prog_mem[4] = i_halt(0);
+        prog_len = 5;
+        load_program; run_until_halt;
+        check_reg("mul: no se ejecuto como add (x5)", 5, 32'd0);
+        check_reg("mul: lo posterior no se ejecuto (x6)", 6, 32'd0);
+
+        // ================================================================
+        $display("\n===== 11b) Load-use: solo frena una dependencia REAL =====");
+        // ================================================================
+        // addi x6, x2, 5: los bits [24:20] (campo rs2) son imm[4:0] = 5,
+        // el mismo numero que el rd del load (x5), pero addi no lee rs2.
+        // Antes se comparaba el campo crudo y eso costaba un stall espurio.
+        // 5 instrucciones sin stalls = 5 + 3 = 8 ciclos hasta que el HALT
+        // entra a MEM/WB; acá se lee 1 más porque en este testbench nadie
+        // congela el núcleo al llegar el HALT (eso lo hace la Debug Unit,
+        // ver tb_riscv_uart_top.v) y run_until_halt recién ve core_halted
+        // en el flanco siguiente.
+        prog_mem[0] = i_addi(1, 0, 77);
+        prog_mem[1] = i_sw(0, 1, 12'd0);   // sw x1, 0(x0): mem[0] = 77
+        prog_mem[2] = i_lw(5, 0, 12'd0);   // x5 = 77
+        prog_mem[3] = i_addi(6, 2, 12'd5); // x6 = x2 + 5 = 5 (no depende de x5)
+        prog_mem[4] = i_halt(0);
+        prog_len = 5;
+        load_program; run_until_halt;
+        cycles_no_dep = cycle_count;
+        check_val("sin dependencia real: 0 stalls (8 ciclos + 1 de lectura)", cycles_no_dep, 32'd9);
+        check_reg("sin dependencia real: x6 = x2 + 5", 6, 32'd5);
+
+        // Mismo programa, pero ahora el consumidor SI lee x5: el stall de
+        // load-use es obligatorio (1 ciclo) y el valor tiene que llegar.
+        prog_mem[3] = i_add(6, 5, 2);      // x6 = x5 + x2 = 77
+        load_program; run_until_halt;
+        check_val("dependencia real: exactamente 1 stall mas", cycle_count - cycles_no_dep, 32'd1);
+        check_reg("dependencia real: x6 = x5 + x2", 6, 32'd77);
+
+        // ================================================================
+        $display("\n===== 12) Salidas de debug para la GUI (IF, stall de datos, forwarding) =====");
+        // ================================================================
+        // Lo que la Dump Unit manda en STATUS[3], STATUS[15:8] y las
+        // palabras 53-54, comparado ciclo a ciclo contra la cronología que
+        // se deriva a mano del programa:
+        //   c3: add x2 en EX con addi x1 en MEM  -> fwd_a_ex = fwd_b_ex = EX/MEM
+        //   c4: lw x3 en EX, add x4 (lee x3) en ID -> stall de datos
+        //   c6: beq x4,x2 en ID con add x4 en EX -> fwd_a_id = EX (salida actual
+        //       de la ALU); add x4 en EX toma x3 del lw que está en MEM/WB.
+        //       x4 = x3 + x2 = 0 + 10 = x2 -> salto tomado
+        tb_global_stall = 0;
+        prog_mem[0] = i_addi(1, 0, 5);        // 0x00
+        prog_mem[1] = i_add (2, 1, 1);        // 0x04  x2 = 10
+        prog_mem[2] = i_lw  (3, 0, 12'd0);    // 0x08  x3 = mem[0] = 0
+        prog_mem[3] = i_add (4, 3, 2);        // 0x0C  x4 = 10 (load-use)
+        prog_mem[4] = i_beq (4, 2, 13'd8);    // 0x10  tomado -> 0x18
+        prog_mem[5] = i_addi(9, 0, 1);        // 0x14  descartada (flush)
+        prog_mem[6] = i_halt(0);              // 0x18
+        prog_len = 7;
+        load_program;
+        check_val("c0: IF.pc = 0",                           if_pc, 32'h00);
+        check_val("c0: IF.instr = imem[0]",                  if_instr, prog_mem[0]);
+        wait_cycle(3);
+        check_val("c3: IF.pc = 0x0C",                        if_pc, 32'h0C);
+        check_val("c3: fwd_sel (add x2 en EX desde EX/MEM)", fwd_sel, 8'b00_00_01_01);
+        check_val("c3: sin stall de datos",                  hazard_stall, 1'b0);
+        wait_cycle(4);
+        check_val("c4: stall de datos (load-use)",           hazard_stall, 1'b1);
+        check_val("c4: PC congelado",                        pc_write_en, 1'b0);
+        check_val("c4: IF.pc = 0x10",                        if_pc, 32'h10);
+        wait_cycle(5);
+        check_val("c5: stall resuelto",                      hazard_stall, 1'b0);
+        check_val("c5: IF.pc sigue en 0x10 (lo retuvo el stall)", if_pc, 32'h10);
+        check_val("c5: ID/EX es la burbuja (NOP)",           uut.id_ex_instr, 32'h00000013);
+        wait_cycle(6);
+        check_val("c6: fwd_sel (beq<-EX, add x4<-MEM/WB)",   fwd_sel, 8'b00_01_00_10);
+        check_val("c6: beq tomado",                          branch_taken, 1'b1);
+        check_val("c6: IF.instr = la que se descarta",       if_instr, prog_mem[5]);
+        wait_cycle(7);
+        check_val("c7: IF.pc = destino del salto (0x18)",    if_pc, 32'h18);
+        check_val("c7: IF/ID vaciado por el flush",          uut.if_id_instr, 32'h00000013);
+        run_until_halt;
+        check_reg("salto tomado: la instruccion descartada no escribio x9", 9, 32'h0);
 
         $display("\n========================================");
         $display("Resultado: %0d EXITO / %0d FALLO", pass_count, fail_count);

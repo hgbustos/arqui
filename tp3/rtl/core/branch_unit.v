@@ -17,8 +17,9 @@
 //   - jal: siempre se toma, destino = PC + imm (formato J).
 //   - jalr: siempre se toma, destino = (rs1 + imm) & ~1 (formato I; el bit
 //     0 se fuerza a 0 por la propia definición de jalr en la especificación
-//     RISC-V, aunque este diseño no soporta instrucciones de 16 bits/C
-//     extension así que en la práctica los targets ya caen alineados a 4).
+//     RISC-V; este diseño no soporta instrucciones de 16 bits/C
+//     extension, y un destino con el bit 1 en 1 no genera excepción:
+//     imem ignora PC[1:0], ver tp3/informe.md §2.2).
 // =============================================================================
 module branch_unit (
     input  wire [31:0] pc_i,

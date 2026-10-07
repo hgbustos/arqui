@@ -448,7 +448,6 @@ def disassemble_word(word: int, pc: int = 0) -> str:
     rs1 = (word >> 15) & 0x1F
     rs2 = (word >> 20) & 0x1F
     funct7 = (word >> 25) & 0x7F
-    funct7_b5 = (word >> 30) & 0x1
 
     if opcode == OP_R:
         mnem = _MNEMONIC_BY_KEY.get((opcode, funct3, funct7))
@@ -459,7 +458,9 @@ def disassemble_word(word: int, pc: int = 0) -> str:
     if opcode in (OP_IMM, OP_LOAD, OP_JALR):
         imm12 = _sign_extend(word >> 20, 12)
         if opcode == OP_IMM and funct3 in (0b001, 0b101):
-            mnem = _MNEMONIC_BY_KEY.get((opcode, funct3, funct7_b5 << 5))
+            # funct7 completo, no solo el bit 5: control_unit.v rechaza
+            # cualquier otro valor (HALT implicito), y aca tiene que verse igual.
+            mnem = _MNEMONIC_BY_KEY.get((opcode, funct3, funct7))
             shamt = rs2  # mismo campo que rs2, pero interpretado como shamt de 5 bits
             if mnem is None:
                 return f".word 0x{word:08x}  ; shift-imm desconocida"
@@ -467,10 +468,10 @@ def disassemble_word(word: int, pc: int = 0) -> str:
         mnem = _MNEMONIC_BY_KEY.get((opcode, funct3, None))
         if mnem is None:
             return f".word 0x{word:08x}  ; I-type desconocida"
-        if opcode == OP_LOAD:
-            return f"{mnem} {REG_NAMES[rd]}, {imm12}({REG_NAMES[rs1]})"
-        if opcode == OP_JALR:
-            target = (pc + imm12) & 0xFFFFFFFF  # aproximado: no conoce el valor real de rs1
+        # jalr usa la misma sintaxis imm(rs1) que los loads. A diferencia de
+        # jal/branches no se muestra el destino: depende del valor de rs1,
+        # que la instruccion sola no conoce.
+        if opcode in (OP_LOAD, OP_JALR):
             return f"{mnem} {REG_NAMES[rd]}, {imm12}({REG_NAMES[rs1]})"
         return f"{mnem} {REG_NAMES[rd]}, {REG_NAMES[rs1]}, {imm12}"
 
