@@ -19,7 +19,7 @@
 // =============================================================================
 module imm_gen (
     input  wire [31:0] instr_i,
-    input  wire [2:0]  imm_sel_i,
+    input  wire [2:0]  imm_sel_i, // indica el formato de inmediato (I/S/B/U/J)
     output reg  [31:0] imm_o
 );
 

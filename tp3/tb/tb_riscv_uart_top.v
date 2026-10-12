@@ -70,8 +70,7 @@ module tb_riscv_uart_top;
         .BAUD_RATE0(SIM_BAUD_RATE), .BAUD_RATE1(SIM_BAUD_RATE),
         .BAUD_RATE2(SIM_BAUD_RATE), .BAUD_RATE3(SIM_BAUD_RATE)
     ) uut (
-        .clk_i(tb_clk), .rst_i(tb_rst), .rx_i(tb_rx), .baud_sel_i(tb_baud_sel), .tx_o(tb_tx),
-        .seg_o(), .dp_o(), .an_o()
+        .clk_i(tb_clk), .rst_i(tb_rst), .rx_i(tb_rx), .baud_sel_i(tb_baud_sel), .tx_o(tb_tx)
     );
 
     // ------------------------------------------------------------------

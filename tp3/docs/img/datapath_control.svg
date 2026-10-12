@@ -1,0 +1,398 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="2720" height="1720" viewBox="0 0 2720 1720" font-family="Consolas, 'DejaVu Sans Mono', 'Courier New', monospace" xml:space="preserve">
+<title>RISC-V core del TP3: datapath y control (riscv_core.v)</title>
+<defs>
+<marker id="me6e6e6" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,1 L9,5 L0,9 z" fill="#e6e6e6"/></marker>
+<marker id="m7c88ff" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,1 L9,5 L0,9 z" fill="#7c88ff"/></marker>
+<marker id="mf39a3d" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,1 L9,5 L0,9 z" fill="#f39a3d"/></marker>
+<marker id="mf2899b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,1 L9,5 L0,9 z" fill="#f2899b"/></marker>
+<marker id="m4fd36f" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,1 L9,5 L0,9 z" fill="#4fd36f"/></marker>
+<marker id="m8d8d8d" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,1 L9,5 L0,9 z" fill="#8d8d8d"/></marker>
+</defs>
+<rect width="2720" height="1720" fill="#101114"/>
+<text x="24" y="34" fill="#e6e6e6" font-size="20" text-anchor="start" font-weight="700">RISC-V CORE (TP3) — DATAPATH Y CONTROL</text>
+<text x="24" y="56" fill="#8d8d8d" font-size="12" text-anchor="start">riscv_core.v · cada cable es una señal real del RTL · (n) = parada del plan de estudio (docs/defensa.md)</text>
+<text x="230" y="92" fill="#8d8d8d" font-size="16" text-anchor="middle" font-weight="700">IF</text>
+<text x="870" y="92" fill="#8d8d8d" font-size="16" text-anchor="middle" font-weight="700">ID</text>
+<text x="1620" y="92" fill="#8d8d8d" font-size="16" text-anchor="middle" font-weight="700">EX</text>
+<text x="2110" y="92" fill="#8d8d8d" font-size="16" text-anchor="middle" font-weight="700">MEM</text>
+<text x="2450" y="92" fill="#8d8d8d" font-size="16" text-anchor="middle" font-weight="700">WB</text>
+<text x="24" y="130" fill="#4fd36f" font-size="11" text-anchor="start">global_stall_i (Debug Unit)</text>
+<path d="M24,112 L96,112" fill="none" stroke="#4fd36f" stroke-width="1.6"/>
+<polygon points="96,103 96,121 114,112" fill="#17181d" stroke="#4fd36f" stroke-width="1.5"/>
+<circle cx="118" cy="112" r="4" fill="#17181d" stroke="#4fd36f" stroke-width="1.5"/>
+<path d="M122,112 L2690,112" fill="none" stroke="#4fd36f" stroke-width="2.2"/>
+<text x="600" y="106" fill="#4fd36f" font-size="11" text-anchor="start">core_en = ~global_stall_i   (riscv_core.v:146)</text>
+<circle cx="195" cy="112" r="3.2" fill="#4fd36f"/>
+<circle cx="454" cy="112" r="3.2" fill="#4fd36f"/>
+<circle cx="1264" cy="112" r="3.2" fill="#4fd36f"/>
+<circle cx="1974" cy="112" r="3.2" fill="#4fd36f"/>
+<circle cx="2264" cy="112" r="3.2" fill="#4fd36f"/>
+<circle cx="2094" cy="112" r="3.2" fill="#4fd36f"/>
+<circle cx="2580" cy="112" r="3.2" fill="#4fd36f"/>
+<rect x="2520" y="30" width="170" height="52" rx="3" fill="#17181d" stroke="#4fd36f" stroke-width="1.5"/>
+<text x="2605.0" y="50" fill="#4fd36f" font-size="12" text-anchor="middle" font-weight="700">cycle_count</text>
+<text x="2605.0" y="68" fill="#8d8d8d" font-size="11" text-anchor="middle">+1 si core_en  (165-170)</text>
+<path d="M2540,112 L2540,82" fill="none" stroke="#4fd36f" stroke-width="1.6" marker-end="url(#m4fd36f)"/>
+<circle cx="2540" cy="112" r="3.2" fill="#4fd36f"/>
+<polygon points="88,390 118,406.2 118,463.8 88,480" fill="#17181d" stroke="#f2899b" stroke-width="1.5"/>
+<text x="103" y="382" fill="#f2899b" font-size="12" text-anchor="start"></text>
+<text x="95" y="409" fill="#8d8d8d" font-size="10" text-anchor="start">0</text>
+<text x="95" y="469" fill="#8d8d8d" font-size="10" text-anchor="start">1</text>
+<rect x="181" y="330" width="28" height="24" rx="10" fill="#17181d" stroke="#e6e6e6" stroke-width="1.5"/>
+<text x="195" y="346" fill="#e6e6e6" font-size="13" text-anchor="middle" font-weight="700">&amp;</text>
+<path d="M195,112 L195,330" fill="none" stroke="#4fd36f" stroke-width="1.6" marker-end="url(#m4fd36f)"/>
+<path d="M195,354 L195,400" fill="none" stroke="#e6e6e6" stroke-width="1.6" marker-end="url(#me6e6e6)"/>
+<text x="205" y="382" fill="#e6e6e6" font-size="10" text-anchor="start">pc_write_en</text>
+<rect x="160" y="400" width="70" height="70" rx="3" fill="#17181d" stroke="#e6e6e6" stroke-width="1.5"/>
+<text x="195.0" y="420" fill="#e6e6e6" font-size="14" text-anchor="middle" font-weight="700">PC</text>
+<text x="195.0" y="438" fill="#8d8d8d" font-size="11" text-anchor="middle">pc_reg</text>
+<path d="M118,435 L160,435" fill="none" stroke="#e6e6e6" stroke-width="1.6" marker-end="url(#me6e6e6)"/>
+<path d="M230,435 L250,435" fill="none" stroke="#e6e6e6" stroke-width="1.6"/>
+<circle cx="250" cy="435" r="3.2" fill="#e6e6e6"/>
+<rect x="270" y="300" width="60" height="40" rx="3" fill="#17181d" stroke="#e6e6e6" stroke-width="1.5"/>
+<text x="300.0" y="320" fill="#e6e6e6" font-size="14" text-anchor="middle" font-weight="700">+4</text>
+<path d="M250,435 L250,320 L270,320" fill="none" stroke="#e6e6e6" stroke-width="1.6" marker-end="url(#me6e6e6)"/>
+<circle cx="250" cy="320" r="3.2" fill="#e6e6e6"/>
+<path d="M300,300 L300,280 L60,280 L60,405 L88,405" fill="none" stroke="#e6e6e6" stroke-width="1.6" marker-end="url(#me6e6e6)"/>
+<text x="160" y="274" fill="#8d8d8d" font-size="10" text-anchor="start">pc_plus4</text>
+<rect x="270" y="1060" width="140" height="140" rx="3" fill="#17181d" stroke="#e6e6e6" stroke-width="1.5"/>
+<text x="340.0" y="1080" fill="#e6e6e6" font-size="14" text-anchor="middle" font-weight="700">imem (7)</text>
+<text x="340.0" y="1098" fill="#8d8d8d" font-size="11" text-anchor="middle">lectura asíncrona</text>
+<text x="340.0" y="1113" fill="#8d8d8d" font-size="11" text-anchor="middle">1024 × 32</text>
+<path d="M250,435 L250,1100 L270,1100" fill="none" stroke="#e6e6e6" stroke-width="1.6" marker-end="url(#me6e6e6)"/>
+<path d="M410,1140 L440,1140" fill="none" stroke="#e6e6e6" stroke-width="1.6" marker-end="url(#me6e6e6)"/>
+<text x="414" y="1134" fill="#8d8d8d" font-size="10" text-anchor="start">instr</text>
+<path d="M340,1226 L340,1200" fill="none" stroke="#4fd36f" stroke-width="1.6" marker-end="url(#m4fd36f)"/>
+<text x="350" y="1224" fill="#4fd36f" font-size="10" text-anchor="start">carga ← debug_unit</text>
+<path d="M250,435 L250,250 L440,250" fill="none" stroke="#e6e6e6" stroke-width="1.6" marker-end="url(#me6e6e6)"/>
+<text x="300" y="244" fill="#8d8d8d" font-size="10" text-anchor="start">pc</text>
+<rect x="440" y="120" width="28" height="24" rx="10" fill="#17181d" stroke="#f39a3d" stroke-width="1.5"/>
+<text x="454" y="136" fill="#f39a3d" font-size="13" text-anchor="middle" font-weight="700">&amp;</text>
+<path d="M454,144 L454,150" fill="none" stroke="#f39a3d" stroke-width="1.6" marker-end="url(#mf39a3d)"/>
+<rect x="440" y="150" width="28" height="1030" fill="#17181d" stroke="#e6e6e6" stroke-width="1.8"/>
+<text x="454" y="635.0" fill="#e6e6e6" font-size="14" text-anchor="middle" font-weight="700">I</text>
+<text x="454" y="651.0" fill="#e6e6e6" font-size="14" text-anchor="middle" font-weight="700">F</text>
+<text x="454" y="667.0" fill="#e6e6e6" font-size="14" text-anchor="middle" font-weight="700">/</text>
+<text x="454" y="683.0" fill="#e6e6e6" font-size="14" text-anchor="middle" font-weight="700">I</text>
+<text x="454" y="699.0" fill="#e6e6e6" font-size="14" text-anchor="middle" font-weight="700">D</text>
+<text x="454" y="1198" fill="#8d8d8d" font-size="11" text-anchor="middle">(9)</text>
+<path d="M468,1140 L510,1140" fill="none" stroke="#e6e6e6" stroke-width="1.6"/>
+<circle cx="510" cy="1140" r="3.2" fill="#e6e6e6"/>
+<path d="M510,1140 L510,330" fill="none" stroke="#e6e6e6" stroke-width="2.2"/>
+<circle cx="510" cy="330" r="3.2" fill="#e6e6e6"/>
+<circle cx="510" cy="580" r="3.2" fill="#e6e6e6"/>
+<circle cx="510" cy="620" r="3.2" fill="#e6e6e6"/>
+<circle cx="510" cy="770" r="3.2" fill="#e6e6e6"/>
+<path d="M510,330 L560,330" fill="none" stroke="#e6e6e6" stroke-width="1.6" marker-end="url(#me6e6e6)"/>
+<text x="516" y="324" fill="#8d8d8d" font-size="10" text-anchor="start">op,f3,f7</text>
+<path d="M510,580 L580,580" fill="none" stroke="#e6e6e6" stroke-width="1.6" marker-end="url(#me6e6e6)"/>
+<text x="516" y="574" fill="#8d8d8d" font-size="10" text-anchor="start">[19:15]</text>
+<path d="M510,620 L580,620" fill="none" stroke="#e6e6e6" stroke-width="1.6" marker-end="url(#me6e6e6)"/>
+<text x="516" y="614" fill="#8d8d8d" font-size="10" text-anchor="start">[24:20]</text>
+<path d="M510,770 L580,770" fill="none" stroke="#e6e6e6" stroke-width="1.6" marker-end="url(#me6e6e6)"/>
+<path d="M510,1140 L1250,1140" fill="none" stroke="#e6e6e6" stroke-width="1.6" marker-end="url(#me6e6e6)"/>
+<text x="600" y="1134" fill="#8d8d8d" font-size="10" text-anchor="start">instr (viaja completa: rd, funct3, ...)</text>
+<path d="M468,250 L1250,250" fill="none" stroke="#e6e6e6" stroke-width="1.6" marker-end="url(#me6e6e6)"/>
+<rect x="560" y="300" width="240" height="170" rx="3" fill="#17181d" stroke="#7c88ff" stroke-width="1.5"/>
+<text x="680.0" y="320" fill="#7c88ff" font-size="14" text-anchor="middle" font-weight="700">control_unit (4)</text>
+<text x="680.0" y="338" fill="#8d8d8d" font-size="11" text-anchor="middle">decodifica opcode + funct3 + funct7</text>
+<text x="680.0" y="353" fill="#8d8d8d" font-size="11" text-anchor="middle">no soportada → is_halt</text>
+<text x="680.0" y="368" fill="#8d8d8d" font-size="11" text-anchor="middle">(HALT implícito)</text>
+<path d="M700,300 L700,170 L1250,170" fill="none" stroke="#7c88ff" stroke-width="1.6" marker-end="url(#m7c88ff)"/>
+<path d="M720,300 L720,190 L1250,190" fill="none" stroke="#7c88ff" stroke-width="1.6" marker-end="url(#m7c88ff)"/>
+<path d="M740,300 L740,210 L1250,210" fill="none" stroke="#7c88ff" stroke-width="1.6" marker-end="url(#m7c88ff)"/>
+<text x="810" y="166" fill="#7c88ff" font-size="11" text-anchor="start">WB: reg_write, mem_to_reg, is_halt</text>
+<text x="810" y="186" fill="#7c88ff" font-size="11" text-anchor="start">M: mem_read, mem_write</text>
+<text x="810" y="206" fill="#7c88ff" font-size="11" text-anchor="start">EX: alu_src_a, alu_src_b, alu_op, is_jal, is_jalr</text>
+<path d="M570,470 L570,795 L580,795" fill="none" stroke="#7c88ff" stroke-width="1.6" marker-end="url(#m7c88ff)"/>
+<text x="574" y="490" fill="#7c88ff" font-size="10" text-anchor="start">imm_sel</text>
+<path d="M800,440 L1000,440 L1000,860" fill="none" stroke="#7c88ff" stroke-width="1.6" marker-end="url(#m7c88ff)"/>
+<text x="806" y="434" fill="#7c88ff" font-size="10" text-anchor="start">is_branch, is_jal, is_jalr, funct3</text>
+<path d="M780,470 L780,484" fill="none" stroke="#7c88ff" stroke-width="1.6" marker-end="url(#m7c88ff)"/>
+<text x="780" y="497" fill="#7c88ff" font-size="11" text-anchor="middle">→ hazard_unit</text>
+<rect x="580" y="540" width="220" height="170" rx="3" fill="#17181d" stroke="#e6e6e6" stroke-width="1.5"/>
+<text x="690.0" y="560" fill="#e6e6e6" font-size="14" text-anchor="middle" font-weight="700">register_file (6)</text>
+<text x="690.0" y="578" fill="#8d8d8d" font-size="11" text-anchor="middle">2 lecturas async</text>
+<text x="690.0" y="593" fill="#8d8d8d" font-size="11" text-anchor="middle">1 escritura (flanco)</text>
+<text x="690.0" y="608" fill="#8d8d8d" font-size="11" text-anchor="middle">x0 = 0 · bypass WB→ID</text>
+<path d="M800,548 L1250,548" fill="none" stroke="#e6e6e6" stroke-width="1.6" marker-end="url(#me6e6e6)"/>
+<text x="850" y="542" fill="#8d8d8d" font-size="10" text-anchor="start">rs1_data (sin adelantar)</text>
+<path d="M800,640 L1250,640" fill="none" stroke="#e6e6e6" stroke-width="1.6" marker-end="url(#me6e6e6)"/>
+<text x="850" y="634" fill="#8d8d8d" font-size="10" text-anchor="start">rs2_data (sin adelantar)</text>
+<text x="590" y="702" fill="#e6e6e6" font-size="10" text-anchor="start">← escritura (WB)</text>
+<text x="794" y="702" fill="#4fd36f" font-size="10" text-anchor="end">regs_flat → dump</text>
+<rect x="580" y="740" width="220" height="70" rx="3" fill="#17181d" stroke="#e6e6e6" stroke-width="1.5"/>
+<text x="690.0" y="760" fill="#e6e6e6" font-size="14" text-anchor="middle" font-weight="700">imm_gen (3)</text>
+<text x="690.0" y="778" fill="#8d8d8d" font-size="11" text-anchor="middle">I / S / B / U / J</text>
+<path d="M800,775 L1250,775" fill="none" stroke="#e6e6e6" stroke-width="1.6" marker-end="url(#me6e6e6)"/>
+<text x="806" y="769" fill="#8d8d8d" font-size="10" text-anchor="start">imm</text>
+<path d="M830,548 L830,885 L850,885" fill="none" stroke="#e6e6e6" stroke-width="1.6" marker-end="url(#me6e6e6)"/>
+<circle cx="830" cy="548" r="3.2" fill="#e6e6e6"/>
+<path d="M840,640 L840,1005 L850,1005" fill="none" stroke="#e6e6e6" stroke-width="1.6" marker-end="url(#me6e6e6)"/>
+<circle cx="840" cy="640" r="3.2" fill="#e6e6e6"/>
+<polygon points="850,870 880,886.56 880,945.44 850,962" fill="#17181d" stroke="#f39a3d" stroke-width="1.5"/>
+<polygon points="850,990 880,1006.56 880,1065.44 850,1082" fill="#17181d" stroke="#f39a3d" stroke-width="1.5"/>
+<path d="M836,905 L850,905" fill="none" stroke="#f39a3d" stroke-width="1.6" marker-end="url(#mf39a3d)"/>
+<text x="832" y="909" fill="#f39a3d" font-size="11" text-anchor="end">ex_result</text>
+<path d="M836,925 L850,925" fill="none" stroke="#f39a3d" stroke-width="1.6" marker-end="url(#mf39a3d)"/>
+<text x="832" y="929" fill="#f39a3d" font-size="11" text-anchor="end">ex_mem_ex_result</text>
+<path d="M836,945 L850,945" fill="none" stroke="#f39a3d" stroke-width="1.6" marker-end="url(#mf39a3d)"/>
+<text x="832" y="949" fill="#f39a3d" font-size="11" text-anchor="end">wb_write_data</text>
+<path d="M836,1025 L850,1025" fill="none" stroke="#f39a3d" stroke-width="1.6" marker-end="url(#mf39a3d)"/>
+<text x="832" y="1029" fill="#f39a3d" font-size="11" text-anchor="end">ex_result</text>
+<path d="M836,1045 L850,1045" fill="none" stroke="#f39a3d" stroke-width="1.6" marker-end="url(#mf39a3d)"/>
+<text x="832" y="1049" fill="#f39a3d" font-size="11" text-anchor="end">ex_mem_ex_result</text>
+<path d="M836,1065 L850,1065" fill="none" stroke="#f39a3d" stroke-width="1.6" marker-end="url(#mf39a3d)"/>
+<text x="832" y="1069" fill="#f39a3d" font-size="11" text-anchor="end">wb_write_data</text>
+<path d="M865,858 L865,872" fill="none" stroke="#f39a3d" stroke-width="1.6" marker-end="url(#mf39a3d)"/>
+<text x="865" y="854" fill="#f39a3d" font-size="11" text-anchor="middle">fwd_a_id</text>
+<path d="M865,982 L865,992" fill="none" stroke="#f39a3d" stroke-width="1.6" marker-end="url(#mf39a3d)"/>
+<text x="865" y="978" fill="#f39a3d" font-size="11" text-anchor="middle">fwd_b_id</text>
+<path d="M880,915 L920,915" fill="none" stroke="#e6e6e6" stroke-width="1.6" marker-end="url(#me6e6e6)"/>
+<path d="M880,1035 L920,1035" fill="none" stroke="#e6e6e6" stroke-width="1.6" marker-end="url(#me6e6e6)"/>
+<rect x="920" y="860" width="230" height="240" rx="3" fill="#17181d" stroke="#f2899b" stroke-width="1.5"/>
+<text x="1035.0" y="880" fill="#f2899b" font-size="14" text-anchor="middle" font-weight="700">branch_unit (5)</text>
+<text x="1035.0" y="898" fill="#8d8d8d" font-size="11" text-anchor="middle">beq: rs1 == rs2</text>
+<text x="1035.0" y="913" fill="#8d8d8d" font-size="11" text-anchor="middle">bne: rs1 != rs2</text>
+<text x="1035.0" y="928" fill="#8d8d8d" font-size="11" text-anchor="middle">jal: pc + imm</text>
+<text x="1035.0" y="943" fill="#8d8d8d" font-size="11" text-anchor="middle">jalr: (rs1+imm) &amp; ~1</text>
+<text x="1035.0" y="958" fill="#8d8d8d" font-size="11" text-anchor="middle"></text>
+<text x="1035.0" y="973" fill="#8d8d8d" font-size="11" text-anchor="middle">taken = jal | jalr |</text>
+<text x="1035.0" y="988" fill="#8d8d8d" font-size="11" text-anchor="middle">  (is_branch &amp; cond)</text>
+<path d="M1060,775 L1060,860" fill="none" stroke="#e6e6e6" stroke-width="1.6" marker-end="url(#me6e6e6)"/>
+<circle cx="1060" cy="775" r="3.2" fill="#e6e6e6"/>
+<text x="1064" y="852" fill="#8d8d8d" font-size="10" text-anchor="start">imm</text>
+<path d="M1100,250 L1100,860" fill="none" stroke="#e6e6e6" stroke-width="1.6" marker-end="url(#me6e6e6)"/>
+<circle cx="1100" cy="250" r="3.2" fill="#e6e6e6"/>
+<text x="1104" y="852" fill="#8d8d8d" font-size="10" text-anchor="start">pc</text>
+<path d="M980,1100 L980,1250 L70,1250 L70,465 L88,465" fill="none" stroke="#f2899b" stroke-width="1.6" marker-end="url(#mf2899b)"/>
+<text x="600" y="1245" fill="#f2899b" font-size="11" text-anchor="start">branch_target</text>
+<path d="M1060,1100 L1060,1265 L50,1265 L50,370 L103,370 L103,397" fill="none" stroke="#f2899b" stroke-width="1.6" marker-end="url(#mf2899b)"/>
+<text x="300" y="1280" fill="#f2899b" font-size="11" text-anchor="start">branch_taken</text>
+<circle cx="880" cy="1265" r="3.2" fill="#f2899b"/>
+<path d="M880,1265 L880,1300" fill="none" stroke="#f2899b" stroke-width="1.6" marker-end="url(#mf2899b)"/>
+<text x="884" y="1292" fill="#f2899b" font-size="10" text-anchor="start">branch_taken</text>
+<rect x="560" y="1300" width="360" height="140" rx="3" fill="#17181d" stroke="#f39a3d" stroke-width="1.5"/>
+<text x="740.0" y="1320" fill="#f39a3d" font-size="14" text-anchor="middle" font-weight="700">hazard_unit (13)</text>
+<text x="740.0" y="1338" fill="#8d8d8d" font-size="11" text-anchor="middle">load_use, load antes de salto, HALT (ecuaciones abajo)</text>
+<text x="740.0" y="1353" fill="#8d8d8d" font-size="11" text-anchor="middle">salidas ← pc_write_en, if_id_write_en, if_id_flush</text>
+<text x="740.0" y="1368" fill="#8d8d8d" font-size="11" text-anchor="middle">        → id_ex_bubble</text>
+<path d="M620,1288 L620,1300" fill="none" stroke="#7c88ff" stroke-width="1.6" marker-end="url(#m7c88ff)"/>
+<text x="620" y="1284" fill="#7c88ff" font-size="11" text-anchor="middle">rs, uses_rs, is_*</text>
+<path d="M790,1288 L790,1300" fill="none" stroke="#f39a3d" stroke-width="1.6" marker-end="url(#mf39a3d)"/>
+<text x="790" y="1284" fill="#f39a3d" font-size="11" text-anchor="middle">rd, mem_read @EX/@MEM</text>
+<path d="M560,1375 L140,1375 L140,342 L181,342" fill="none" stroke="#f39a3d" stroke-width="1.6" marker-end="url(#mf39a3d)"/>
+<text x="150" y="1370" fill="#f39a3d" font-size="10" text-anchor="start">pc_write_en (hazard)</text>
+<path d="M560,1395 L478,1395 L478,132 L468,132" fill="none" stroke="#f39a3d" stroke-width="1.6" marker-end="url(#mf39a3d)"/>
+<text x="474" y="1391" fill="#f39a3d" font-size="10" text-anchor="end">if_id_write_en</text>
+<path d="M560,1415 L490,1415 L490,1160 L468,1160" fill="none" stroke="#f2899b" stroke-width="1.6" marker-end="url(#mf2899b)"/>
+<text x="486" y="1411" fill="#f2899b" font-size="10" text-anchor="end">if_id_flush</text>
+<path d="M920,1400 L1300,1400 L1300,1170 L1278,1170" fill="none" stroke="#f39a3d" stroke-width="1.6" marker-end="url(#mf39a3d)"/>
+<text x="1294" y="1290" fill="#f39a3d" font-size="10" text-anchor="end">bubble</text>
+<text x="930" y="1394" fill="#f39a3d" font-size="10" text-anchor="start">id_ex_bubble (= stall)</text>
+<path d="M454,112 L454,120" fill="none" stroke="#4fd36f" stroke-width="1.6" marker-end="url(#m4fd36f)"/>
+<path d="M1264,112 L1264,150" fill="none" stroke="#4fd36f" stroke-width="1.6" marker-end="url(#m4fd36f)"/>
+<text x="1270" y="146" fill="#4fd36f" font-size="10" text-anchor="start">en</text>
+<rect x="1250" y="150" width="28" height="1030" fill="#17181d" stroke="#e6e6e6" stroke-width="1.8"/>
+<text x="1264" y="635.0" fill="#e6e6e6" font-size="14" text-anchor="middle" font-weight="700">I</text>
+<text x="1264" y="651.0" fill="#e6e6e6" font-size="14" text-anchor="middle" font-weight="700">D</text>
+<text x="1264" y="667.0" fill="#e6e6e6" font-size="14" text-anchor="middle" font-weight="700">/</text>
+<text x="1264" y="683.0" fill="#e6e6e6" font-size="14" text-anchor="middle" font-weight="700">E</text>
+<text x="1264" y="699.0" fill="#e6e6e6" font-size="14" text-anchor="middle" font-weight="700">X</text>
+<text x="1264" y="1198" fill="#8d8d8d" font-size="11" text-anchor="middle">(10)</text>
+<polygon points="1330,515 1360,531.2 1360,588.8 1330,605" fill="#17181d" stroke="#f39a3d" stroke-width="1.5"/>
+<polygon points="1330,625 1360,641.2 1360,698.8 1330,715" fill="#17181d" stroke="#f39a3d" stroke-width="1.5"/>
+<path d="M1278,548 L1330,548" fill="none" stroke="#e6e6e6" stroke-width="1.6" marker-end="url(#me6e6e6)"/>
+<path d="M1278,640 L1330,640" fill="none" stroke="#e6e6e6" stroke-width="1.6" marker-end="url(#me6e6e6)"/>
+<path d="M1345,503 L1345,517" fill="none" stroke="#f39a3d" stroke-width="1.6" marker-end="url(#mf39a3d)"/>
+<text x="1345" y="499" fill="#f39a3d" font-size="11" text-anchor="middle">fwd_a_ex</text>
+<path d="M1345,732 L1345,712" fill="none" stroke="#f39a3d" stroke-width="1.6" marker-end="url(#mf39a3d)"/>
+<text x="1340" y="746" fill="#f39a3d" font-size="11" text-anchor="end">fwd_b_ex</text>
+<path d="M2000,580 L2000,300 L1295,300 L1295,665 L1330,665" fill="none" stroke="#f39a3d" stroke-width="1.6" marker-end="url(#mf39a3d)"/>
+<path d="M1295,568 L1330,568" fill="none" stroke="#f39a3d" stroke-width="1.6" marker-end="url(#mf39a3d)"/>
+<circle cx="1295" cy="568" r="3.2" fill="#f39a3d"/>
+<text x="1500" y="296" fill="#f39a3d" font-size="11" text-anchor="start">ex_mem_ex_result (desde EX/MEM) → muxes de EX (01)</text>
+<path d="M2440,640 L2440,280 L1312,280 L1312,685 L1330,685" fill="none" stroke="#f39a3d" stroke-width="1.6" marker-end="url(#mf39a3d)"/>
+<path d="M1312,588 L1330,588" fill="none" stroke="#f39a3d" stroke-width="1.6" marker-end="url(#mf39a3d)"/>
+<circle cx="1312" cy="588" r="3.2" fill="#f39a3d"/>
+<text x="1500" y="276" fill="#f39a3d" font-size="11" text-anchor="start">wb_write_data (desde WB) → muxes de EX (10)</text>
+<polygon points="1400,540 1425,550.8 1425,589.2 1400,600" fill="#17181d" stroke="#7c88ff" stroke-width="1.5"/>
+<path d="M1360,560 L1400,560" fill="none" stroke="#e6e6e6" stroke-width="1.6" marker-end="url(#me6e6e6)"/>
+<text x="1396" y="594" fill="#8d8d8d" font-size="11" text-anchor="end">0</text>
+<path d="M1412,210 L1412,545" fill="none" stroke="#7c88ff" stroke-width="1.6" marker-end="url(#m7c88ff)"/>
+<circle cx="1412" cy="210" r="3.2" fill="#7c88ff"/>
+<text x="1416" y="532" fill="#7c88ff" font-size="10" text-anchor="start">alu_src_a</text>
+<path d="M1425,570 L1580,570" fill="none" stroke="#e6e6e6" stroke-width="1.6" marker-end="url(#me6e6e6)"/>
+<polygon points="1400,650 1425,664.4 1425,715.6 1400,730" fill="#17181d" stroke="#7c88ff" stroke-width="1.5"/>
+<path d="M1360,670 L1375,670 L1400,670" fill="none" stroke="#e6e6e6" stroke-width="1.6" marker-end="url(#me6e6e6)"/>
+<circle cx="1375" cy="670" r="3.2" fill="#e6e6e6"/>
+<path d="M1278,775 L1385,775 L1385,710 L1400,710" fill="none" stroke="#e6e6e6" stroke-width="1.6" marker-end="url(#me6e6e6)"/>
+<path d="M1440,210 L1440,638 L1412,638 L1412,654" fill="none" stroke="#7c88ff" stroke-width="1.6" marker-end="url(#m7c88ff)"/>
+<circle cx="1440" cy="210" r="3.2" fill="#7c88ff"/>
+<text x="1444" y="634" fill="#7c88ff" font-size="10" text-anchor="start">alu_src_b</text>
+<path d="M1375,670 L1375,1010 L1960,1010" fill="none" stroke="#e6e6e6" stroke-width="1.6" marker-end="url(#me6e6e6)"/>
+<text x="1500" y="1004" fill="#8d8d8d" font-size="10" text-anchor="start">rs2 adelantado = dato del store</text>
+<rect x="1460" y="670" width="82" height="42" rx="3" fill="#17181d" stroke="#e6e6e6" stroke-width="1.5"/>
+<text x="1501" y="687" fill="#e6e6e6" font-size="10" text-anchor="middle">[4:0] si</text>
+<text x="1501" y="702" fill="#e6e6e6" font-size="10" text-anchor="middle">shift</text>
+<path d="M1425,690 L1460,690" fill="none" stroke="#e6e6e6" stroke-width="1.6" marker-end="url(#me6e6e6)"/>
+<path d="M1542,690 L1580,690" fill="none" stroke="#e6e6e6" stroke-width="1.6" marker-end="url(#me6e6e6)"/>
+<polygon points="1580,520 1680,560 1680,720 1580,760 1580,665 1600,640 1580,615" fill="#17181d" stroke="#e6e6e6" stroke-width="1.8"/>
+<text x="1640" y="645" fill="#e6e6e6" font-size="15" text-anchor="middle" font-weight="700">ALU</text>
+<text x="1640" y="662" fill="#8d8d8d" font-size="11" text-anchor="middle">(1)</text>
+<text x="1640" y="778" fill="#8d8d8d" font-size="10" text-anchor="middle">zero, co: sin usar</text>
+<rect x="1560" y="360" width="140" height="70" rx="3" fill="#17181d" stroke="#7c88ff" stroke-width="1.5"/>
+<text x="1630.0" y="380" fill="#7c88ff" font-size="12" text-anchor="middle" font-weight="700">alu_control (2)</text>
+<text x="1630.0" y="398" fill="#8d8d8d" font-size="11" text-anchor="middle">alu_op+funct3+[30]</text>
+<path d="M1600,210 L1600,360" fill="none" stroke="#7c88ff" stroke-width="1.6" marker-end="url(#m7c88ff)"/>
+<circle cx="1600" cy="210" r="3.2" fill="#7c88ff"/>
+<path d="M1710,1140 L1710,395 L1700,395" fill="none" stroke="#e6e6e6" stroke-width="1.6" marker-end="url(#me6e6e6)"/>
+<circle cx="1710" cy="1140" r="3.2" fill="#e6e6e6"/>
+<text x="1714" y="470" fill="#8d8d8d" font-size="10" text-anchor="start">funct3, bit 30</text>
+<path d="M1630,430 L1630,540" fill="none" stroke="#7c88ff" stroke-width="1.6" marker-end="url(#m7c88ff)"/>
+<text x="1634" y="452" fill="#7c88ff" font-size="10" text-anchor="start">alu_ctrl</text>
+<circle cx="1630" cy="470" r="3.2" fill="#7c88ff"/>
+<path d="M1630,470 L1501,470 L1501,670" fill="none" stroke="#7c88ff" stroke-width="1.6" marker-end="url(#m7c88ff)"/>
+<text x="1505" y="490" fill="#7c88ff" font-size="10" text-anchor="start">is_shift</text>
+<rect x="1740" y="800" width="70" height="40" rx="3" fill="#17181d" stroke="#e6e6e6" stroke-width="1.5"/>
+<text x="1775.0" y="820" fill="#e6e6e6" font-size="14" text-anchor="middle" font-weight="700">pc+4</text>
+<path d="M1770,250 L1770,800" fill="none" stroke="#e6e6e6" stroke-width="1.6" marker-end="url(#me6e6e6)"/>
+<circle cx="1770" cy="250" r="3.2" fill="#e6e6e6"/>
+<path d="M1810,820 L1835,820 L1835,680 L1850,680" fill="none" stroke="#e6e6e6" stroke-width="1.6" marker-end="url(#me6e6e6)"/>
+<polygon points="1850,600 1875,618.0 1875,682.0 1850,700" fill="#17181d" stroke="#7c88ff" stroke-width="1.5"/>
+<path d="M1680,640 L1850,640" fill="none" stroke="#e6e6e6" stroke-width="1.6" marker-end="url(#me6e6e6)"/>
+<text x="1690" y="634" fill="#8d8d8d" font-size="10" text-anchor="start">alu_result</text>
+<rect x="1849" y="560" width="28" height="24" rx="10" fill="#17181d" stroke="#7c88ff" stroke-width="1.5"/>
+<text x="1863" y="576" fill="#7c88ff" font-size="13" text-anchor="middle" font-weight="700">≥1</text>
+<path d="M1862,210 L1862,560" fill="none" stroke="#7c88ff" stroke-width="1.6" marker-end="url(#m7c88ff)"/>
+<circle cx="1862" cy="210" r="3.2" fill="#7c88ff"/>
+<text x="1866" y="548" fill="#7c88ff" font-size="10" text-anchor="start">is_jal | is_jalr</text>
+<path d="M1863,584 L1863,605" fill="none" stroke="#7c88ff" stroke-width="1.6" marker-end="url(#m7c88ff)"/>
+<path d="M1875,650 L1960,650" fill="none" stroke="#e6e6e6" stroke-width="1.6" marker-end="url(#me6e6e6)"/>
+<text x="1880" y="644" fill="#e6e6e6" font-size="11" text-anchor="start">ex_result</text>
+<rect x="1320" y="1300" width="420" height="140" rx="3" fill="#17181d" stroke="#f39a3d" stroke-width="1.5"/>
+<text x="1530.0" y="1320" fill="#f39a3d" font-size="14" text-anchor="middle" font-weight="700">forwarding_unit (12)</text>
+<text x="1530.0" y="1338" fill="#8d8d8d" font-size="11" text-anchor="middle">compara rs1/rs2 (ID y EX) con el rd de ID/EX, EX/MEM, MEM/WB</text>
+<text x="1530.0" y="1353" fill="#8d8d8d" font-size="11" text-anchor="middle">(si reg_write y rd ≠ x0; gana el más reciente)</text>
+<text x="1530.0" y="1368" fill="#8d8d8d" font-size="11" text-anchor="middle">hacia EX: EX/MEM &gt; MEM/WB · hacia ID: EX &gt; EX/MEM &gt; MEM/WB</text>
+<text x="1530.0" y="1383" fill="#8d8d8d" font-size="11" text-anchor="middle">salidas → fwd_a_ex, fwd_b_ex (EX) · fwd_a_id, fwd_b_id (ID)</text>
+<path d="M1278,170 L1960,170" fill="none" stroke="#7c88ff" stroke-width="1.6" marker-end="url(#m7c88ff)"/>
+<path d="M1278,190 L1960,190" fill="none" stroke="#7c88ff" stroke-width="1.6" marker-end="url(#m7c88ff)"/>
+<path d="M1278,210 L1880,210" fill="none" stroke="#7c88ff" stroke-width="1.6"/>
+<path d="M1278,250 L1960,250" fill="none" stroke="#e6e6e6" stroke-width="1.6" marker-end="url(#me6e6e6)"/>
+<path d="M1278,1140 L1960,1140" fill="none" stroke="#e6e6e6" stroke-width="1.6" marker-end="url(#me6e6e6)"/>
+<path d="M1974,112 L1974,150" fill="none" stroke="#4fd36f" stroke-width="1.6" marker-end="url(#m4fd36f)"/>
+<text x="1980" y="146" fill="#4fd36f" font-size="10" text-anchor="start">en</text>
+<rect x="1960" y="150" width="28" height="1030" fill="#17181d" stroke="#e6e6e6" stroke-width="1.8"/>
+<text x="1974" y="635.0" fill="#e6e6e6" font-size="14" text-anchor="middle" font-weight="700">E</text>
+<text x="1974" y="651.0" fill="#e6e6e6" font-size="14" text-anchor="middle" font-weight="700">X</text>
+<text x="1974" y="667.0" fill="#e6e6e6" font-size="14" text-anchor="middle" font-weight="700">/</text>
+<text x="1974" y="683.0" fill="#e6e6e6" font-size="14" text-anchor="middle" font-weight="700">M</text>
+<text x="1974" y="699.0" fill="#e6e6e6" font-size="14" text-anchor="middle" font-weight="700">E</text>
+<text x="1974" y="715.0" fill="#e6e6e6" font-size="14" text-anchor="middle" font-weight="700">M</text>
+<text x="1974" y="1198" fill="#8d8d8d" font-size="11" text-anchor="middle">(11)</text>
+<path d="M1988,650 L2000,650 L2040,650" fill="none" stroke="#e6e6e6" stroke-width="1.6" marker-end="url(#me6e6e6)"/>
+<circle cx="2000" cy="650" r="3.2" fill="#e6e6e6"/>
+<path d="M2000,650 L2000,580" fill="none" stroke="#e6e6e6" stroke-width="1.6"/>
+<circle cx="2000" cy="580" r="3.2" fill="#e6e6e6"/>
+<path d="M2000,580 L2250,580" fill="none" stroke="#e6e6e6" stroke-width="1.6" marker-end="url(#me6e6e6)"/>
+<text x="2010" y="574" fill="#e6e6e6" font-size="10" text-anchor="start">ex_mem_ex_result</text>
+<rect x="2040" y="600" width="150" height="300" rx="3" fill="#17181d" stroke="#e6e6e6" stroke-width="1.5"/>
+<text x="2115.0" y="620" fill="#e6e6e6" font-size="14" text-anchor="middle" font-weight="700">dmem (8)</text>
+<text x="2115" y="740" fill="#8d8d8d" font-size="11" text-anchor="middle">lee siempre (async)</text>
+<text x="2115" y="755" fill="#8d8d8d" font-size="11" text-anchor="middle">sb/sh/sw: máscara</text>
+<text x="2115" y="770" fill="#8d8d8d" font-size="11" text-anchor="middle">lb/lh/lbu/lhu</text>
+<text x="2046" y="664" fill="#8d8d8d" font-size="10" text-anchor="start">addr</text>
+<path d="M1988,1010 L2015,1010 L2015,800 L2040,800" fill="none" stroke="#e6e6e6" stroke-width="1.6" marker-end="url(#me6e6e6)"/>
+<text x="2046" y="804" fill="#8d8d8d" font-size="10" text-anchor="start">wdata</text>
+<path d="M2025,1140 L2025,850 L2040,850" fill="none" stroke="#e6e6e6" stroke-width="1.6" marker-end="url(#me6e6e6)"/>
+<circle cx="2025" cy="1140" r="3.2" fill="#e6e6e6"/>
+<text x="2046" y="854" fill="#8d8d8d" font-size="10" text-anchor="start">funct3</text>
+<rect x="2066" y="520" width="28" height="24" rx="10" fill="#17181d" stroke="#7c88ff" stroke-width="1.5"/>
+<text x="2080" y="536" fill="#7c88ff" font-size="13" text-anchor="middle" font-weight="700">&amp;</text>
+<path d="M2072,190 L2072,520" fill="none" stroke="#7c88ff" stroke-width="1.6" marker-end="url(#m7c88ff)"/>
+<circle cx="2072" cy="190" r="3.2" fill="#7c88ff"/>
+<text x="2076" y="506" fill="#7c88ff" font-size="10" text-anchor="start">mem_write</text>
+<path d="M2094,112 L2094,520" fill="none" stroke="#4fd36f" stroke-width="1.6" marker-end="url(#m4fd36f)"/>
+<path d="M2080,544 L2080,600" fill="none" stroke="#7c88ff" stroke-width="1.6" marker-end="url(#m7c88ff)"/>
+<text x="2100" y="540" fill="#7c88ff" font-size="10" text-anchor="start">mem_store_en (480)</text>
+<path d="M2190,700 L2250,700" fill="none" stroke="#e6e6e6" stroke-width="1.6" marker-end="url(#me6e6e6)"/>
+<text x="2196" y="694" fill="#8d8d8d" font-size="10" text-anchor="start">rdata</text>
+<path d="M2075,926 L2075,900" fill="none" stroke="#4fd36f" stroke-width="1.6" marker-end="url(#m4fd36f)"/>
+<text x="2075" y="940" fill="#4fd36f" font-size="10" text-anchor="middle">carga ← debug_unit</text>
+<path d="M2165,900 L2165,944" fill="none" stroke="#4fd36f" stroke-width="1.6" marker-end="url(#m4fd36f)"/>
+<text x="2165" y="958" fill="#4fd36f" font-size="10" text-anchor="middle">dbg → dump_unit</text>
+<path d="M1988,190 L2140,190" fill="none" stroke="#7c88ff" stroke-width="1.6"/>
+<text x="2105" y="206" fill="#7c88ff" font-size="10" text-anchor="start">mem_read → hazard</text>
+<path d="M1988,170 L2250,170" fill="none" stroke="#7c88ff" stroke-width="1.6" marker-end="url(#m7c88ff)"/>
+<path d="M1988,250 L2250,250" fill="none" stroke="#e6e6e6" stroke-width="1.6" marker-end="url(#me6e6e6)"/>
+<path d="M1988,1140 L2250,1140" fill="none" stroke="#e6e6e6" stroke-width="1.6" marker-end="url(#me6e6e6)"/>
+<path d="M2264,112 L2264,150" fill="none" stroke="#4fd36f" stroke-width="1.6" marker-end="url(#m4fd36f)"/>
+<text x="2270" y="146" fill="#4fd36f" font-size="10" text-anchor="start">en</text>
+<rect x="2250" y="150" width="28" height="1030" fill="#17181d" stroke="#e6e6e6" stroke-width="1.8"/>
+<text x="2264" y="635.0" fill="#e6e6e6" font-size="14" text-anchor="middle" font-weight="700">M</text>
+<text x="2264" y="651.0" fill="#e6e6e6" font-size="14" text-anchor="middle" font-weight="700">E</text>
+<text x="2264" y="667.0" fill="#e6e6e6" font-size="14" text-anchor="middle" font-weight="700">M</text>
+<text x="2264" y="683.0" fill="#e6e6e6" font-size="14" text-anchor="middle" font-weight="700">/</text>
+<text x="2264" y="699.0" fill="#e6e6e6" font-size="14" text-anchor="middle" font-weight="700">W</text>
+<text x="2264" y="715.0" fill="#e6e6e6" font-size="14" text-anchor="middle" font-weight="700">B</text>
+<text x="2264" y="1198" fill="#8d8d8d" font-size="11" text-anchor="middle">(11)</text>
+<polygon points="2370,560 2400,588.8 2400,691.2 2370,720" fill="#17181d" stroke="#7c88ff" stroke-width="1.5"/>
+<text x="2377" y="584" fill="#8d8d8d" font-size="10" text-anchor="start">0</text>
+<text x="2377" y="704" fill="#8d8d8d" font-size="10" text-anchor="start">1</text>
+<path d="M2278,580 L2370,580" fill="none" stroke="#e6e6e6" stroke-width="1.6" marker-end="url(#me6e6e6)"/>
+<text x="2284" y="574" fill="#8d8d8d" font-size="10" text-anchor="start">result</text>
+<path d="M2278,700 L2370,700" fill="none" stroke="#e6e6e6" stroke-width="1.6" marker-end="url(#me6e6e6)"/>
+<text x="2284" y="694" fill="#8d8d8d" font-size="10" text-anchor="start">mem_read_data</text>
+<path d="M2385,170 L2385,568" fill="none" stroke="#7c88ff" stroke-width="1.6" marker-end="url(#m7c88ff)"/>
+<circle cx="2385" cy="170" r="3.2" fill="#7c88ff"/>
+<text x="2389" y="556" fill="#7c88ff" font-size="10" text-anchor="start">mem_to_reg</text>
+<path d="M2400,640 L2440,640" fill="none" stroke="#e6e6e6" stroke-width="1.6"/>
+<circle cx="2440" cy="640" r="3.2" fill="#e6e6e6"/>
+<text x="2446" y="660" fill="#e6e6e6" font-size="11" text-anchor="start">wb_write_data</text>
+<rect x="2555" y="900" width="28" height="24" rx="10" fill="#17181d" stroke="#7c88ff" stroke-width="1.5"/>
+<text x="2569" y="916" fill="#7c88ff" font-size="13" text-anchor="middle" font-weight="700">&amp;</text>
+<path d="M2560,170 L2560,900" fill="none" stroke="#7c88ff" stroke-width="1.6" marker-end="url(#m7c88ff)"/>
+<circle cx="2560" cy="170" r="3.2" fill="#7c88ff"/>
+<path d="M2580,112 L2580,900" fill="none" stroke="#4fd36f" stroke-width="1.6" marker-end="url(#m4fd36f)"/>
+<text x="2569" y="944" fill="#7c88ff" font-size="10" text-anchor="middle">wb_reg_write (537)</text>
+<path d="M2440,640 L2440,1480 L530,1480 L530,690 L580,690" fill="none" stroke="#e6e6e6" stroke-width="2" marker-end="url(#me6e6e6)"/>
+<path d="M2569,924 L2569,1480 L2440,1480" fill="none" stroke="#7c88ff" stroke-width="1.6"/>
+<circle cx="2440" cy="1480" r="3.2" fill="#e6e6e6"/>
+<path d="M2278,1140 L2300,1140 L2300,1480" fill="none" stroke="#e6e6e6" stroke-width="1.6"/>
+<circle cx="2300" cy="1480" r="3.2" fill="#e6e6e6"/>
+<text x="2306" y="1134" fill="#8d8d8d" font-size="10" text-anchor="start">rd = instr[11:7]</text>
+<text x="1100" y="1472" fill="#e6e6e6" font-size="12" text-anchor="start">escritura en el banco: rd, wb_write_data, wb_reg_write  (vuelve de WB a ID)</text>
+<path d="M2278,170 L2610,170" fill="none" stroke="#7c88ff" stroke-width="1.6"/>
+<text x="2615" y="160" fill="#4fd36f" font-size="10" text-anchor="start">is_halt →</text>
+<text x="2615" y="174" fill="#4fd36f" font-size="10" text-anchor="start">core_halted_o</text>
+<text x="2615" y="188" fill="#4fd36f" font-size="10" text-anchor="start">(538)</text>
+<path d="M2278,250 L2294,250" fill="none" stroke="#8d8d8d" stroke-width="1.6" marker-end="url(#m8d8d8d)"/>
+<text x="2298" y="254" fill="#8d8d8d" font-size="11" text-anchor="start">pc (debug)</text>
+<rect x="1790" y="1300" width="470" height="140" rx="3" fill="#17181d" stroke="#4fd36f" stroke-width="1.5"/>
+<text x="2025.0" y="1320" fill="#4fd36f" font-size="14" text-anchor="middle" font-weight="700">Debug Unit ↔ core</text>
+<text x="2025.0" y="1338" fill="#8d8d8d" font-size="11" text-anchor="middle">entra: global_stall_i (→ core_en), carga imem/dmem, soft-reset</text>
+<text x="2025.0" y="1353" fill="#8d8d8d" font-size="11" text-anchor="middle">sale a la Dump Unit: if_pc/if_instr, 4 latches, regs_flat,</text>
+<text x="2025.0" y="1368" fill="#8d8d8d" font-size="11" text-anchor="middle">cycle_count, STATUS (halted, taken, pc_we, stall, fwd_sel),</text>
+<text x="2025.0" y="1383" fill="#8d8d8d" font-size="11" text-anchor="middle">dmem por el puerto dbg</text>
+<rect x="24" y="1510" width="1150" height="180" rx="3" fill="#17181d" stroke="#f39a3d" stroke-width="1.5"/>
+<text x="599.0" y="1530" fill="#f39a3d" font-size="13" text-anchor="middle" font-weight="700">ECUACIONES (hazard_unit.v:73-93, riscv_core.v:146-150)</text>
+<text x="40" y="1556" fill="#f39a3d" font-size="13" text-anchor="start">load_use   = mem_read@EX · rd@EX≠0 · ((uses_rs1 · rd@EX=rs1) + (uses_rs2 · rd@EX=rs2))</text>
+<text x="40" y="1578" fill="#f39a3d" font-size="13" text-anchor="start">load_salto = (is_branch + is_jalr) · (load_use + [mem_read@MEM · rd@MEM≠0 · rd@MEM=rs usado])</text>
+<text x="40" y="1600" fill="#f39a3d" font-size="13" text-anchor="start">stall      = load_use + load_salto      →  id_ex_bubble = stall</text>
+<text x="40" y="1622" fill="#f2899b" font-size="13" text-anchor="start">if_id_flush = branch_taken · ~stall</text>
+<text x="40" y="1644" fill="#4fd36f" font-size="13" text-anchor="start">pc_write_en = if_id_write_en = ~(stall + is_halt) · core_en</text>
+<text x="40" y="1666" fill="#4fd36f" font-size="13" text-anchor="start">core_en = ~global_stall_i   (la Debug Unit congela todo el core)</text>
+<text x="1220" y="1530" fill="#e6e6e6" font-size="13" text-anchor="start" font-weight="700">LEYENDA</text>
+<path d="M1220,1552 L1260,1552" fill="none" stroke="#e6e6e6" stroke-width="1.6" marker-end="url(#me6e6e6)"/>
+<text x="1270" y="1556" fill="#e6e6e6" font-size="12" text-anchor="start">datapath (datos que avanzan, y la escritura que vuelve de WB)</text>
+<path d="M1220,1574 L1260,1574" fill="none" stroke="#7c88ff" stroke-width="1.6" marker-end="url(#m7c88ff)"/>
+<text x="1270" y="1578" fill="#7c88ff" font-size="12" text-anchor="start">señales de control (control_unit → latches → etapa que las usa)</text>
+<path d="M1220,1596 L1260,1596" fill="none" stroke="#f39a3d" stroke-width="1.6" marker-end="url(#mf39a3d)"/>
+<text x="1270" y="1600" fill="#f39a3d" font-size="12" text-anchor="start">riesgos de datos: forwarding y stall/burbuja</text>
+<path d="M1220,1618 L1260,1618" fill="none" stroke="#f2899b" stroke-width="1.6" marker-end="url(#mf2899b)"/>
+<text x="1270" y="1622" fill="#f2899b" font-size="12" text-anchor="start">riesgos de control: salto (destino, taken) y flush</text>
+<path d="M1220,1640 L1260,1640" fill="none" stroke="#4fd36f" stroke-width="1.6" marker-end="url(#m4fd36f)"/>
+<text x="1270" y="1644" fill="#4fd36f" font-size="12" text-anchor="start">Debug Unit: core_en (congelar), carga, salidas de debug</text>
+<text x="1220" y="1700" fill="#8d8d8d" font-size="11" text-anchor="start">etiqueta con flecha corta = la señal llega desde el módulo nombrado (el cable no se dibuja entero) · ● = bifurcación · (n) en latches/módulos = parada</text>
+</svg>

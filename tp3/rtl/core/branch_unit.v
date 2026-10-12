@@ -3,8 +3,9 @@
 //
 // Descripción:
 // Resuelve TODOS los cambios de flujo (beq/bne/jal/jalr) en la etapa ID,
-// en vez de en EX -- la optimización que describe el Patterson en 4.8
-// (fig. 4.62) para bajar la penalización de salto tomado de 2 burbujas a 1.
+// en vez de en MEM -- la optimización que describe el Patterson en 4.8
+// (fig. 4.62): la penalización de un salto tomado baja de 3 ciclos (en el
+// datapath sin optimizar el salto se decide en MEM, fig. 4.59) a 1.
 // Es puramente combinacional: no sabe nada de forwarding ni de hazards,
 // consume rs1_data_i/rs2_data_i ya resueltos (forwarding_unit decide, río
 // arriba en riscv_core, si esos valores vienen del banco de registros o

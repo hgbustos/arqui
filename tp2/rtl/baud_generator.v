@@ -51,14 +51,24 @@ module baud_rate_generator #(
         endcase
     end
 
+    // 'baud_sel_reg' es un flip-flop SIN reset: copia los switches en cada
+    // flanco, también mientras dura el reset, así que al liberarse ya vale
+    // lo mismo que 'baud_sel_i' y no se detecta un cambio falso. No va en el
+    // bloque de abajo porque un reset asíncrono sólo puede cargar una
+    // constante (el flip-flop de la FPGA tiene preset/clear, nada más):
+    // cargar ahí 'baud_sel_i', que es una entrada, obligaba a Vivado a
+    // armarlo con un latch y lógica sobre los pines de preset/clear
+    // (avisos LATCH-1, TIMING-20 y LUTAR-1 del reporte de metodología).
+    always @(posedge clk_i) begin
+        baud_sel_reg <= baud_sel_i;
+    end
+
     always @(posedge clk_i, posedge rst_i) begin
         if (rst_i) begin
-            count        <= {CNT_WIDTH{1'b0}};
-            tick_o       <= 1'b0;
-            baud_sel_reg <= baud_sel_i; // asume el selector ya estable antes del reset
+            count  <= {CNT_WIDTH{1'b0}};
+            tick_o <= 1'b0;
         end
         else begin
-            baud_sel_reg <= baud_sel_i;
             // Si cambió el preset, reiniciar el contador limpio: seguir
             // contando con el divisor viejo generaría un tick con período
             // incorrecto (mezcla de dos bases de tiempo distintas).

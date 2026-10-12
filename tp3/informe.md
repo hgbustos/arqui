@@ -16,7 +16,7 @@ Bustos Hugo Gabriel - -
    4. [Debug Unit y protocolo UART](#24-debug-unit-y-protocolo-uart)
    5. [Reutilización de TP1/TP2](#25-reutilización-de-tp1tp2)
 3. [Decisiones de diseño](#3-decisiones-de-diseño)
-   1. [Dónde se resuelven los saltos: ID en vez de EX](#31-dónde-se-resuelven-los-saltos-id-en-vez-de-ex)
+   1. [Dónde se resuelven los saltos: ID en vez de MEM](#31-dónde-se-resuelven-los-saltos-id-en-vez-de-mem)
    2. [HALT: propia y también implícita](#32-halt-propia-y-también-implícita)
    3. [Reprogramación: qué se vacía y qué no](#33-reprogramación-qué-se-vacía-y-qué-no)
    4. [Riesgo estructural: por qué no aparece](#34-riesgo-estructural-por-qué-no-aparece)
@@ -185,7 +185,7 @@ El enunciado pide tratar los 3 tipos clásicos (Patterson 4.5, p.262):
 |---|---|---|
 | Estructural | No — ver §3.4 | — |
 | De datos | Sí | `forwarding_unit.v`: adelantamiento hacia EX (Patterson 4.7, p.294, prioridad EX/MEM > MEM/WB) **y** hacia ID (necesario por resolver saltos ahí; incluye adelantar el resultado de la ALU del mismo ciclo, decisión propia explicada en §3.1, prioridad EX > EX/MEM > MEM/WB) |
-| De control | Sí | Saltos resueltos en ID (Patterson 4.8, p.307, fig. 4.62) → 1 burbuja por salto tomado, en vez de 2 |
+| De control | Sí | Saltos resueltos en ID (Patterson 4.8, p.307, fig. 4.62) → 1 burbuja por salto tomado, en vez de las 3 del datapath sin optimizar, que decide en MEM (fig. 4.59) |
 
 Casos particulares de riesgo de datos que necesitan detener el pipeline
 (no alcanza con adelantar):
@@ -292,22 +292,24 @@ El enunciado pide explícitamente identificar los puntos que requieren
 sección responde, una por una, a las preguntas abiertas planteadas en la
 consigna.
 
-### 3.1 Dónde se resuelven los saltos: ID en vez de EX
+### 3.1 Dónde se resuelven los saltos: ID en vez de MEM
 
 Patterson presenta el pipeline en dos etapas de refinamiento (Cap. 4):
-primero una versión que resuelve beq en la propia etapa EX (4.6, p.276),
-y después, en la sección de riesgos de control (4.8, p.307, fig. 4.62),
-mueve la resolución a ID agregando un comparador dedicado —reduce la
-penalización de un salto tomado de 2 burbujas a 1, al costo de forwarding
-adicional hacia una etapa más temprana.
+primero el datapath sin optimizar (4.6), en el que la ALU compara los
+registros en EX pero el salto recién se decide en MEM —para entonces ya
+se buscaron las tres instrucciones que lo siguen, y si se toma hay que
+descartarlas de IF, ID y EX (fig. 4.59)—; y después, en la sección de
+riesgos de control (4.8, p.307, fig. 4.62), mueve la resolución a ID
+agregando un comparador dedicado —reduce la penalización de un salto
+tomado de 3 ciclos a 1 (sólo se descarta la instrucción que se está
+buscando), al costo de forwarding adicional hacia una etapa más temprana.
 
 **Se optó por resolver en ID** (`branch_unit.v`), la mejora que el libro
-presenta sobre la versión básica. El costo concreto: `forwarding_unit.v`
-necesita una segunda pista de adelantamiento (hacia ID, ver §2.3) y
-`hazard_unit.v` necesita el caso extendido de "load antes de un branch"
-que no existiría si los saltos se resolvieran en EX. A cambio, cada salto
-tomado cuesta la mitad de burbujas que en la alternativa simple (1 en vez
-de 2).
+presenta sobre la versión sin optimizar. El costo concreto:
+`forwarding_unit.v` necesita una segunda pista de adelantamiento (hacia
+ID, ver §2.3) y `hazard_unit.v` necesita el caso extendido de "load
+antes de un branch" que no existiría si los saltos se resolvieran más
+adelante. A cambio, cada salto tomado cuesta 1 ciclo en vez de 3.
 
 **Decisión propia: adelantar a ID el resultado de la ALU del mismo
 ciclo.** En la versión del libro, los operandos del comparador en ID

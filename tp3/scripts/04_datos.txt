@@ -1,0 +1,7 @@
+# 04_datos.txt -- datos iniciales para 04_suma_arreglo.asm (CMD_LOAD_DATA)
+# Una palabra de 32 bits por línea, desde la dirección 0x0 (decimal o 0x...)
+3
+7
+10
+20
+5

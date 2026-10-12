@@ -35,7 +35,9 @@ from riscv_protocol import (
     expected_dump_size, parse_dump, to_signed32,
 )
 
-BAUD_TO_SEL = {9600: 0b00, 19200: 0b01, 57600: 0b10, 115200: 0b11}
+# El bitstream de la Basys 3 usa 115200 fijo (BAUD_RATE de riscv_fpga_top.v);
+# las otras opciones sirven si se sintetiza con otro valor.
+BAUD_CHOICES = [9600, 19200, 57600, 115200]
 
 POLL_S = 0.1  # cada cuánto se revisa si hay que mandar la pausa mientras corre un CMD_RUN
 
@@ -143,8 +145,9 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="Cliente serie para el pipeline RISC-V + Debug Unit de TP3.")
     parser.add_argument("--port", required=True, help="Puerto serie, ej. COM4 o /dev/ttyUSB0")
-    parser.add_argument("--baud", type=int, default=115200, choices=sorted(BAUD_TO_SEL),
-                         help="Baud rate (debe coincidir con baud_sel_i de la FPGA)")
+    parser.add_argument("--baud", type=int, default=115200, choices=BAUD_CHOICES,
+                         help="Baud rate (debe coincidir con BAUD_RATE de riscv_fpga_top.v: "
+                              "115200 en el bitstream de la Basys 3)")
     parser.add_argument("--timeout", type=float, default=5.0,
                          help="Timeout de lectura en segundos. Con --mode run, si el volcado "
                               "no empieza a llegar en este tiempo se manda una pausa (CMD_BREAK)")
@@ -188,8 +191,7 @@ def main() -> None:
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
 
-    sel = BAUD_TO_SEL[args.baud]
-    print(f"Conectando a {args.port} @ {args.baud} bps (baud_sel_i={sel:02b})")
+    print(f"Conectando a {args.port} @ {args.baud} bps")
     try:
         ser = serial.Serial(args.port, args.baud, timeout=args.timeout)
     except serial.SerialException as e:

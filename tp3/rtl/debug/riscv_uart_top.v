@@ -33,7 +33,11 @@
 // enable, tal como pide el enunciado.
 //
 // Único punto de entrada/salida físico: 'rx_i'/'tx_o' (además de clock,
-// reset y 'baud_sel_i', igual que uart_alu_top.v). CLK_FREQ=100MHz por
+// reset y 'baud_sel_i', igual que uart_alu_top.v). Las salidas 'panel_*'
+// exponen, sólo para observarlas, algunas señales internas (estado del
+// núcleo y de la Debug Unit) que usa el panel de la placa
+// (tp3/rtl/fpga/panel_basys3.v); los testbenches las dejan sin conectar.
+// CLK_FREQ=100MHz por
 // default (frecuencia real del oscilador de la Basys3). 'DMEM_DEPTH_WORDS'
 // default en 256 (no el 1024 de riscv_core.v) a propósito: mantiene cada
 // volcado completo en ~100ms a 115200 baudios en vez de ~375ms -- ver
@@ -55,17 +59,18 @@ module riscv_uart_top #(
     input  wire [1:0] baud_sel_i,
     output wire       tx_o,
 
-    // Display de 7 segmentos: sin uso en este TP, apagado explícitamente
-    // (mismo motivo que uart_alu_top.v: comparte banco de pines en la
-    // Basys3 con otras señales, dejarlo flotante se ve "medio prendido").
-    output wire [6:0] seg_o,
-    output wire       dp_o,
-    output wire [3:0] an_o
+    // --- Para el panel de la placa (sólo observación, ver header) ---
+    output wire        panel_rst_o,          // reset físico sincronizado
+    output wire        panel_core_stall_o,   // núcleo congelado por la Debug Unit
+    output wire        panel_core_halted_o,  // HALT en WB
+    output wire        panel_soft_reset_o,   // carga de programa/datos o CMD_RESET
+    output wire        panel_hazard_stall_o,
+    output wire        panel_branch_taken_o,
+    output wire [7:0]  panel_fwd_sel_o,
+    output wire [31:0] panel_if_id_instr_o,
+    output wire [31:0] panel_id_ex_instr_o,
+    output wire [31:0] panel_cycle_count_o
 );
-
-    assign seg_o = 7'b1111111;
-    assign dp_o  = 1'b1;
-    assign an_o  = 4'b1111;
 
     // --- Sincronizador de reset (activación asíncrona, liberación síncrona) ---
     reg [1:0] rst_sync_reg;
@@ -275,5 +280,17 @@ module riscv_uart_top #(
         .dmem_dbg_addr_o(dmem_dbg_addr), .dmem_dbg_rdata_i(dmem_dbg_rdata),
         .w_data_o(w_data), .tx_full_i(tx_full), .wr_o(wr)
     );
+
+    // --- Señales que observa el panel de la placa ---
+    assign panel_rst_o          = rst_sync;
+    assign panel_core_stall_o   = core_stall;
+    assign panel_core_halted_o  = core_halted;
+    assign panel_soft_reset_o   = core_soft_reset;
+    assign panel_hazard_stall_o = hazard_stall;
+    assign panel_branch_taken_o = branch_taken;
+    assign panel_fwd_sel_o      = fwd_sel;
+    assign panel_if_id_instr_o  = if_id_instr;
+    assign panel_id_ex_instr_o  = id_ex_instr;
+    assign panel_cycle_count_o  = cycle_count;
 
 endmodule

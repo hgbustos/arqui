@@ -15,3 +15,9 @@ __pycache__/
 *.Xil/
 *.jou
 *.log
+
+# Salidas que Vivado regenera solo: productos generados de los IP (Clock
+# Wizard) y el checkpoint de la síntesis incremental automática. El .xpr y
+# el .xci del IP sí se versionan: son la definición del proyecto.
+*.gen/
+**/*.srcs/utils_1/

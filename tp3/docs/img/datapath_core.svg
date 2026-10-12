@@ -1,0 +1,321 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1420" height="880" viewBox="0 0 1420 880" font-family="Segoe UI, Arial, Helvetica, sans-serif">
+  <title>riscv_core.v: cómo viajan las señales por el pipeline</title>
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,1 L9,5 L0,9 z" fill="#2C2C2A"/></marker>
+    <marker id="o" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,1 L9,5 L0,9 z" fill="#D85A30"/></marker>
+    <marker id="c" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,1 L9,5 L0,9 z" fill="#185FA5"/></marker>
+    <style>
+      .h   { font-size: 17px; font-weight: 700; fill: #2C2C2A; }
+      .stg { font-size: 15px; font-weight: 700; fill: #444441; text-anchor: middle; }
+      .t   { font-size: 12px; font-weight: 700; fill: #2C2C2A; text-anchor: middle; }
+      .s   { font-size: 10.5px; fill: #2C2C2A; text-anchor: middle; }
+      .xs  { font-size: 9.5px; fill: #444441; text-anchor: middle; }
+      .l   { text-anchor: start; }
+      .r   { text-anchor: end; }
+      .ctl { fill: #185FA5; }
+      .org { fill: #B4431A; }
+      .gry { fill: #6B6A64; }
+      .w   { fill: none; stroke: #2C2C2A; stroke-width: 1.4; }
+      .wo  { fill: none; stroke: #D85A30; stroke-width: 1.6; }
+      .wc  { fill: none; stroke: #185FA5; stroke-width: 1.4; stroke-dasharray: 6 3; }
+      .bar { fill: #9FE1CB; stroke: #0F6E56; stroke-width: 1; }
+      .comb{ fill: #EEEDFE; stroke: #534AB7; stroke-width: 1; }
+      .st  { fill: #E1F5EE; stroke: #0F6E56; stroke-width: 1; }
+      .mux { fill: #F1EFE8; stroke: #5F5E5A; stroke-width: 1; }
+      .dbg { fill: #F1EFE8; stroke: #888780; stroke-width: 1; }
+      .dot { fill: #2C2C2A; }
+      .doto{ fill: #D85A30; }
+    </style>
+  </defs>
+
+  <rect x="0" y="0" width="1420" height="880" fill="#FFFFFF"/>
+
+  <!-- Titulo -->
+  <text x="16" y="26" class="h">riscv_core.v — cómo viajan las señales por el pipeline</text>
+  <text x="16" y="45" class="s l">(n) = parada del plan de estudio · negro: dato que avanza · naranja: dato que vuelve hacia atrás · azul: control (se nombra la señal, el cable no se dibuja)</text>
+
+  <!-- Etapas -->
+  <text x="108" y="74" class="stg">IF</text>
+  <text x="468" y="74" class="stg">ID</text>
+  <text x="906" y="74" class="stg">EX</text>
+  <text x="1181" y="74" class="stg">MEM</text>
+  <text x="1346" y="74" class="stg">WB</text>
+
+  <!-- Latches -->
+  <rect x="215" y="112" width="22" height="500" class="bar"/>
+  <rect x="700" y="112" width="22" height="500" class="bar"/>
+  <rect x="1090" y="112" width="22" height="500" class="bar"/>
+  <rect x="1250" y="112" width="22" height="500" class="bar"/>
+  <text x="226" y="628" class="s" font-weight="700">IF/ID (9)</text>
+  <text x="226" y="641" class="xs ctl">en · flush</text>
+  <text x="711" y="628" class="s" font-weight="700">ID/EX (10)</text>
+  <text x="711" y="641" class="xs ctl">en · bubble</text>
+  <text x="1101" y="628" class="s" font-weight="700">EX/MEM (11)</text>
+  <text x="1101" y="641" class="xs ctl">en</text>
+  <text x="1261" y="628" class="s" font-weight="700">MEM/WB (11)</text>
+  <text x="1261" y="641" class="xs ctl">en</text>
+
+  <!-- ===================== IF ===================== -->
+  <polygon points="26,200 50,212 50,278 26,290" class="mux"/>
+  <text x="31" y="226" class="xs l">0</text>
+  <text x="31" y="272" class="xs l">1</text>
+  <text x="4" y="306" class="xs ctl l">sel: branch_taken</text>
+  <path d="M50,245 L66,245" class="w" marker-end="url(#a)"/>
+
+  <rect x="66" y="222" width="48" height="46" class="st"/>
+  <text x="90" y="242" class="t">PC</text>
+  <text x="90" y="258" class="xs">pc_reg</text>
+  <text x="90" y="282" class="xs ctl">pc_write_en</text>
+  <text x="90" y="293" class="xs ctl">· core_en</text>
+
+  <path d="M114,245 L126,245" class="w"/>
+  <path d="M126,245 L126,300 L140,300" class="w" marker-end="url(#a)"/>
+  <path d="M126,245 L126,190 L215,190" class="w" marker-end="url(#a)"/>
+  <circle cx="126" cy="245" r="2.6" class="dot"/>
+
+  <rect x="140" y="150" width="50" height="26" class="comb"/>
+  <text x="165" y="167" class="t">+4</text>
+  <path d="M165,190 L165,176" class="w" marker-end="url(#a)"/>
+  <circle cx="165" cy="190" r="2.6" class="dot"/>
+  <path d="M165,150 L165,104 L16,104 L16,222 L26,222" class="w" marker-end="url(#a)"/>
+  <text x="172" y="128" class="xs l">pc+4</text>
+
+  <rect x="140" y="280" width="65" height="90" class="st"/>
+  <text x="172" y="318" class="t">imem</text>
+  <text x="172" y="334" class="s">(7)</text>
+  <text x="172" y="360" class="xs gry">← carga</text>
+  <path d="M205,330 L215,330" class="w" marker-end="url(#a)"/>
+
+  <!-- destino de salto: vuelve desde branch_unit al mux del PC -->
+  <path d="M670,470 L670,92 L6,92 L6,268 L26,268" class="wo" marker-end="url(#o)"/>
+  <text x="40" y="87" class="xs org l">branch_target (desde branch_unit, en ID)</text>
+
+  <!-- ===================== ID ===================== -->
+  <path d="M237,190 L700,190" class="w" marker-end="url(#a)"/>
+  <text x="300" y="185" class="xs l">pc</text>
+
+  <path d="M237,330 L252,330" class="w"/>
+  <path d="M252,148 L252,445" class="w"/>
+  <circle cx="252" cy="330" r="2.6" class="dot"/>
+  <path d="M252,150 L270,150" class="w" marker-end="url(#a)"/>
+  <path d="M252,245 L270,245" class="w" marker-end="url(#a)"/>
+  <path d="M252,275 L270,275" class="w" marker-end="url(#a)"/>
+  <path d="M252,400 L270,400" class="w" marker-end="url(#a)"/>
+  <path d="M252,445 L700,445" class="w" marker-end="url(#a)"/>
+  <circle cx="252" cy="245" r="2.6" class="dot"/>
+  <circle cx="252" cy="275" r="2.6" class="dot"/>
+  <circle cx="252" cy="400" r="2.6" class="dot"/>
+  <text x="300" y="440" class="xs l">instr (viaja completa)</text>
+
+  <rect x="270" y="125" width="120" height="50" class="comb"/>
+  <text x="330" y="146" class="t">control_unit (4)</text>
+  <text x="330" y="163" class="xs">opcode, funct3, funct7</text>
+  <path d="M390,132 L700,132" class="wc" marker-end="url(#c)"/>
+  <text x="400" y="127" class="xs ctl l">control (§A): reg_write, alu_src_a/b, alu_op, mem_*, is_*</text>
+
+  <rect x="270" y="225" width="120" height="120" class="st"/>
+  <text x="276" y="249" class="xs l">rs1</text>
+  <text x="276" y="279" class="xs l">rs2</text>
+  <text x="330" y="290" class="t">register_file</text>
+  <text x="330" y="306" class="s">(6)</text>
+  <text x="276" y="329" class="xs org l">escritura ← WB</text>
+  <text x="330" y="360" class="xs gry">regs → dump_unit</text>
+  <path d="M390,245 L700,245" class="w" marker-end="url(#a)"/>
+  <path d="M390,305 L700,305" class="w" marker-end="url(#a)"/>
+  <text x="398" y="240" class="xs l">rs1_data</text>
+  <text x="398" y="300" class="xs l">rs2_data</text>
+
+  <rect x="270" y="378" width="120" height="44" class="comb"/>
+  <text x="330" y="398" class="t">imm_gen (3)</text>
+  <text x="330" y="413" class="xs ctl">imm_sel ← control</text>
+  <path d="M390,400 L700,400" class="w" marker-end="url(#a)"/>
+  <text x="398" y="395" class="xs l">imm</text>
+
+  <!-- muxes de forwarding hacia ID (sólo para branch_unit) -->
+  <path d="M450,245 L450,484 L470,484" class="w" marker-end="url(#a)"/>
+  <circle cx="450" cy="245" r="2.6" class="dot"/>
+  <path d="M458,305 L458,564 L470,564" class="w" marker-end="url(#a)"/>
+  <circle cx="458" cy="305" r="2.6" class="dot"/>
+
+  <polygon points="470,470 492,480 492,530 470,540" class="mux"/>
+  <text x="481" y="466" class="xs ctl">fwd_a_id</text>
+  <text x="444" y="500" class="xs org r">01 ex_result</text>
+  <text x="444" y="512" class="xs org r">10 ex_mem_ex_result</text>
+  <text x="444" y="524" class="xs org r">11 wb_write_data</text>
+  <path d="M446,520 L470,520" class="wo" marker-end="url(#o)"/>
+  <path d="M492,505 L525,505" class="w" marker-end="url(#a)"/>
+
+  <polygon points="470,550 492,560 492,610 470,620" class="mux"/>
+  <text x="481" y="547" class="xs ctl">fwd_b_id</text>
+  <text x="444" y="580" class="xs org r">01 ex_result</text>
+  <text x="444" y="592" class="xs org r">10 ex_mem_ex_result</text>
+  <text x="444" y="604" class="xs org r">11 wb_write_data</text>
+  <path d="M446,600 L470,600" class="wo" marker-end="url(#o)"/>
+  <path d="M492,585 L525,585" class="w" marker-end="url(#a)"/>
+  <text x="440" y="545" class="xs r">00 = valor del banco</text>
+  <text x="440" y="557" class="xs r">(forwarding hacia ID)</text>
+
+  <rect x="525" y="470" width="165" height="140" class="comb"/>
+  <text x="607" y="490" class="t">branch_unit (5)</text>
+  <text x="607" y="508" class="xs">rs1, rs2 ya adelantados</text>
+  <text x="607" y="524" class="xs">beq: ==   ·   bne: !=</text>
+  <text x="607" y="538" class="xs">jal: pc + imm</text>
+  <text x="607" y="552" class="xs">jalr: (rs1 + imm) &amp; ~1</text>
+  <text x="607" y="572" class="xs ctl">funct3, is_branch/jal/jalr</text>
+  <text x="607" y="586" class="xs ctl">branch_taken → mux PC,</text>
+  <text x="607" y="599" class="xs ctl">hazard_unit (flush)</text>
+  <path d="M600,400 L600,470" class="w" marker-end="url(#a)"/>
+  <circle cx="600" cy="400" r="2.6" class="dot"/>
+  <path d="M640,190 L640,470" class="w" marker-end="url(#a)"/>
+  <circle cx="640" cy="190" r="2.6" class="dot"/>
+
+  <!-- ===================== EX ===================== -->
+  <path d="M722,132 L1090,132" class="wc" marker-end="url(#c)"/>
+  <path d="M955,132 L955,145" class="wc" marker-end="url(#c)"/>
+  <path d="M722,190 L1090,190" class="w" marker-end="url(#a)"/>
+  <path d="M722,245 L760,245" class="w" marker-end="url(#a)"/>
+  <path d="M722,305 L750,305 L750,325 L760,325" class="w" marker-end="url(#a)"/>
+  <path d="M722,400 L800,400 L800,365 L810,365" class="w" marker-end="url(#a)"/>
+  <path d="M722,445 L1090,445" class="w" marker-end="url(#a)"/>
+
+  <!-- forwarding desde EX/MEM y desde WB hacia los muxes de EX -->
+  <path d="M1122,262 L1122,204 L736,204 L736,342 L760,342" class="wo" marker-end="url(#o)"/>
+  <path d="M736,262 L760,262" class="wo" marker-end="url(#o)"/>
+  <circle cx="736" cy="262" r="2.6" class="doto"/>
+  <text x="790" y="200" class="xs org l">ex_mem_ex_result (desde EX/MEM)</text>
+  <path d="M1340,305 L1340,216 L744,216 L744,356 L760,356" class="wo" marker-end="url(#o)"/>
+  <path d="M744,276 L760,276" class="wo" marker-end="url(#o)"/>
+  <circle cx="744" cy="276" r="2.6" class="doto"/>
+  <text x="1135" y="212" class="xs org l">wb_write_data (desde WB)</text>
+
+  <polygon points="760,232 782,242 782,288 760,298" class="mux"/>
+  <text x="771" y="228" class="xs ctl">fwd_a_ex</text>
+  <polygon points="760,312 782,322 782,368 760,378" class="mux"/>
+  <text x="771" y="390" class="xs ctl">fwd_b_ex</text>
+
+  <polygon points="810,240 830,250 830,282 810,292" class="mux"/>
+  <text x="820" y="236" class="xs ctl">alu_src_a</text>
+  <text x="806" y="288" class="xs r">0</text>
+  <path d="M782,265 L796,265 L796,255 L810,255" class="w" marker-end="url(#a)"/>
+  <path d="M830,266 L920,266" class="w" marker-end="url(#a)"/>
+
+  <polygon points="810,320 830,330 830,370 810,380" class="mux"/>
+  <text x="832" y="392" class="xs ctl l">alu_src_b</text>
+  <path d="M782,345 L792,345 L792,335 L810,335" class="w" marker-end="url(#a)"/>
+  <circle cx="792" cy="345" r="2.6" class="dot"/>
+  <path d="M792,345 L792,480 L1090,480" class="w" marker-end="url(#a)"/>
+  <text x="850" y="476" class="xs l">rs2 adelantado = dato del store</text>
+  <path d="M830,350 L842,350" class="w" marker-end="url(#a)"/>
+
+  <rect x="842" y="335" width="63" height="30" class="comb"/>
+  <text x="873" y="348" class="xs">recorte</text>
+  <text x="873" y="360" class="xs">shift: [4:0]</text>
+  <path d="M905,350 L920,350" class="w" marker-end="url(#a)"/>
+
+  <polygon points="920,228 980,258 980,352 920,382 920,318 932,305 920,292" class="comb"/>
+  <text x="955" y="300" class="t">ALU</text>
+  <text x="955" y="316" class="s">(1)</text>
+
+  <rect x="890" y="145" width="110" height="36" class="comb"/>
+  <text x="945" y="160" class="t">alu_control (2)</text>
+  <text x="945" y="174" class="xs">alu_op, funct3, bit 30</text>
+  <path d="M950,181 L950,241" class="w" marker-end="url(#a)"/>
+
+  <path d="M980,305 L1050,305" class="w" marker-end="url(#a)"/>
+  <rect x="990" y="400" width="45" height="28" class="comb"/>
+  <text x="1012" y="418" class="s">pc+4</text>
+  <path d="M1012,190 L1012,400" class="w" marker-end="url(#a)"/>
+  <circle cx="1012" cy="190" r="2.6" class="dot"/>
+  <path d="M1035,414 L1042,414 L1042,330 L1050,330" class="w" marker-end="url(#a)"/>
+  <polygon points="1050,285 1068,295 1068,335 1050,345" class="mux"/>
+  <text x="1086" y="278" class="xs ctl r">is_jal | is_jalr</text>
+  <path d="M1068,315 L1090,315" class="w" marker-end="url(#a)"/>
+
+  <!-- ===================== MEM ===================== -->
+  <path d="M1112,132 L1250,132" class="wc" marker-end="url(#c)"/>
+  <path d="M1112,190 L1250,190" class="w" marker-end="url(#a)"/>
+  <path d="M1112,315 L1130,315" class="w" marker-end="url(#a)"/>
+  <path d="M1122,315 L1122,262 L1250,262" class="w" marker-end="url(#a)"/>
+  <circle cx="1122" cy="315" r="2.6" class="dot"/>
+  <circle cx="1122" cy="262" r="2.6" class="dot"/>
+  <text x="1186" y="257" class="xs">ex_mem_ex_result</text>
+  <path d="M1112,480 L1124,480 L1124,400 L1130,400" class="w" marker-end="url(#a)"/>
+  <path d="M1112,445 L1250,445" class="w" marker-end="url(#a)"/>
+
+  <rect x="1130" y="300" width="110" height="120" class="st"/>
+  <text x="1185" y="320" class="t">dmem (8)</text>
+  <text x="1185" y="337" class="xs">addr ← resultado de EX</text>
+  <text x="1185" y="351" class="xs">wdata ← rs2 (abajo)</text>
+  <text x="1185" y="365" class="xs ctl">mem_write · core_en</text>
+  <text x="1185" y="379" class="xs ctl">funct3: ancho y signo</text>
+  <text x="1185" y="396" class="xs gry">carga ← debug_unit</text>
+  <text x="1185" y="410" class="xs gry">dbg → dump_unit</text>
+  <path d="M1240,340 L1250,340" class="w" marker-end="url(#a)"/>
+
+  <!-- ===================== WB ===================== -->
+  <path d="M1272,132 L1284,132" class="wc"/>
+  <text x="1278" y="148" class="xs ctl l">reg_write, mem_to_reg,</text>
+  <text x="1278" y="160" class="xs ctl l">is_halt</text>
+  <path d="M1272,190 L1284,190" class="w"/>
+  <text x="1288" y="194" class="xs gry l">pc (sólo debug)</text>
+  <path d="M1272,262 L1300,262" class="w" marker-end="url(#a)"/>
+  <path d="M1272,340 L1300,340" class="w" marker-end="url(#a)"/>
+  <path d="M1272,445 L1284,445" class="w"/>
+  <text x="1288" y="449" class="xs l">rd = instr[11:7]</text>
+
+  <polygon points="1300,248 1322,258 1322,352 1300,362" class="mux"/>
+  <text x="1305" y="266" class="xs l">0</text>
+  <text x="1305" y="344" class="xs l">1</text>
+  <text x="1311" y="240" class="xs ctl">mem_to_reg</text>
+  <path d="M1322,305 L1340,305" class="w"/>
+  <circle cx="1340" cy="305" r="3" class="doto"/>
+  <text x="1346" y="322" class="s l">wb_write_data</text>
+  <text x="1346" y="400" class="xs ctl">is_halt →</text>
+  <text x="1346" y="412" class="xs ctl">core_halted_o</text>
+  <text x="1346" y="424" class="xs ctl">(a debug_unit)</text>
+
+  <!-- escritura en el banco de registros: vuelve desde WB hasta ID -->
+  <path d="M1340,305 L1340,656 L244,656 L244,325 L270,325" class="wo" marker-end="url(#o)"/>
+  <text x="760" y="651" class="xs org l">escritura: wb_write_data + rd + wb_reg_write (= reg_write · core_en) → register_file</text>
+
+  <!-- ===================== Unidades de riesgos y Debug Unit ===================== -->
+  <rect x="262" y="685" width="400" height="80" class="comb"/>
+  <text x="462" y="704" class="t">hazard_unit (13)</text>
+  <text x="462" y="721" class="xs">lee: rs, uses_rs y tipo (branch/jalr/halt) de la instrucción en ID,</text>
+  <text x="462" y="734" class="xs">rd + mem_read de los loads en ID/EX y EX/MEM, y branch_taken</text>
+  <text x="462" y="752" class="xs ctl">→ pc_write_en, if_id_write_en, if_id_flush, id_ex_bubble</text>
+
+  <rect x="700" y="685" width="390" height="80" class="comb"/>
+  <text x="895" y="704" class="t">forwarding_unit (12)</text>
+  <text x="895" y="721" class="xs">compara rs1/rs2 (de ID y de EX) con el rd de ID/EX, EX/MEM y MEM/WB</text>
+  <text x="895" y="734" class="xs">(sólo si esa instrucción escribe y rd ≠ x0; gana la más reciente)</text>
+  <text x="895" y="752" class="xs ctl">→ fwd_a_ex, fwd_b_ex (muxes de EX) · fwd_a_id, fwd_b_id (muxes de ID)</text>
+
+  <rect x="1110" y="685" width="300" height="80" class="dbg"/>
+  <text x="1260" y="704" class="t">Debug Unit → core</text>
+  <text x="1260" y="721" class="xs ctl">global_stall_i → core_en = ~global_stall_i</text>
+  <text x="1260" y="736" class="xs">core_en = 0 congela PC, los 4 latches,</text>
+  <text x="1260" y="750" class="xs">escritura de regs y dmem, y el contador de ciclos</text>
+
+  <!-- ===================== Leyenda ===================== -->
+  <path d="M16,795 L46,795" class="w" marker-end="url(#a)"/>
+  <text x="52" y="799" class="s l">dato que avanza (32 bits)</text>
+  <path d="M230,795 L260,795" class="wo" marker-end="url(#o)"/>
+  <text x="266" y="799" class="s l">dato que vuelve hacia atrás: forwarding, escritura en WB, destino de salto</text>
+  <path d="M700,795 L730,795" class="wc" marker-end="url(#c)"/>
+  <text x="736" y="799" class="s l">señales de control agrupadas · en azul, el nombre de una señal de control</text>
+
+  <rect x="16" y="813" width="22" height="16" class="bar"/>
+  <text x="44" y="825" class="s l">latch de pipeline (en = core_en; IF/ID y PC además dependen de hazard_unit)</text>
+  <rect x="470" y="813" width="22" height="16" class="comb"/>
+  <text x="498" y="825" class="s l">combinacional</text>
+  <rect x="590" y="813" width="22" height="16" class="st"/>
+  <text x="618" y="825" class="s l">guarda estado</text>
+  <polygon points="712,811 728,817 728,825 712,831" class="mux"/>
+  <text x="734" y="825" class="s l">mux</text>
+  <circle cx="790" cy="821" r="3" class="dot"/>
+  <text x="798" y="825" class="s l">bifurcación: el mismo cable va a dos lugares</text>
+
+  <text x="16" y="852" class="s l">PC, +4, muxes de EX, pc+4 de jal/jalr y mux de WB viven dentro de riscv_core.v (paradas 14a/14b). ex_result = salida de EX (ALU, o pc+4 si es jal/jalr).</text>
+  <text x="16" y="868" class="s l">Muxes de forwarding: 00 = valor sin adelantar (banco de registros o latch); 01, 10, 11 = valor adelantado desde la etapa que se indica.</text>
+</svg>
