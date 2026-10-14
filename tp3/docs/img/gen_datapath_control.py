@@ -1,22 +1,34 @@
 """Genera tp3/docs/img/datapath_control.svg: datapath + control completo de
 riscv_core.v. Cada cable corresponde a una señal real del RTL (ver
-comentarios con la línea de riscv_core.v que la origina)."""
+comentarios con la línea de riscv_core.v que la origina).
+
+Con --pdf también genera datapath_control.pdf (A3 apaisado) para imprimir."""
 from xml.sax.saxutils import escape
 
 import os
+import shutil
+import subprocess
+import sys
+import tempfile
 OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "datapath_control.svg")
 W, H = 2720, 1720
 
-BG = "#101114"; BOX = "#17181d"
-WH = "#e6e6e6"; BL = "#7c88ff"; OR = "#f39a3d"; PK = "#f2899b"; GR = "#4fd36f"; GY = "#8d8d8d"
+BG = "#ffffff"; BAND = "#f1f3f6"     # fondo claro: se imprime bien y gasta poca tinta
+WH = "#2d333b"; BL = "#0e7f86"; OR = "#7c3aed"; PK = "#d1293d"; GR = "#a66a00"; GY = "#6b7280"
+# relleno suave de cada módulo según la categoría de su borde
+TINT = {WH: "#ffffff", BL: "#e7f5f6", OR: "#f3edfe", PK: "#fdecee", GR: "#fbf3df", GY: "#ffffff"}
+SANS = "'Segoe UI', 'Helvetica Neue', Arial, sans-serif"
+MONO = "Consolas, 'DejaVu Sans Mono', 'Courier New', monospace"
 
 out = []
 def a(s): out.append(s)
 
-def text(x, y, s, c=WH, size=12, anchor="start", bold=False, italic=False):
+def text(x, y, s, c=WH, size=12, anchor="start", bold=False, italic=False, mono=False):
     w = ' font-weight="700"' if bold else ""
     it = ' font-style="italic"' if italic else ""
-    a(f'<text x="{x}" y="{y}" fill="{c}" font-size="{size}" text-anchor="{anchor}"{w}{it}>{escape(s)}</text>')
+    f = f' font-family="{MONO}" style="white-space:pre"' if mono else ""
+    size = {10: 11.5, 11: 12.5, 12: 13}.get(size, size)   # letra chica más grande: se imprime
+    a(f'<text x="{x}" y="{y}" fill="{c}" font-size="{size}" text-anchor="{anchor}"{w}{it}{f}>{escape(s)}</text>')
 
 def wire(pts, c=WH, arrow=True, w=1.6, dash=None):
     d = "M" + " L".join(f"{x},{y}" for x, y in pts)
@@ -28,7 +40,7 @@ def dot(x, y, c=WH):
     a(f'<circle cx="{x}" cy="{y}" r="3.2" fill="{c}"/>')
 
 def box(x, y, w, h, title, c=WH, sub=None, fs=14):
-    a(f'<rect x="{x}" y="{y}" width="{w}" height="{h}" rx="3" fill="{BOX}" stroke="{c}" stroke-width="1.5"/>')
+    a(f'<rect x="{x}" y="{y}" width="{w}" height="{h}" rx="6" fill="{TINT[c]}" stroke="{c}" stroke-width="1.5"/>')
     if title:
         text(x + w / 2, y + 20, title, c, fs, "middle", True)
     if sub:
@@ -36,16 +48,16 @@ def box(x, y, w, h, title, c=WH, sub=None, fs=14):
             text(x + w / 2, y + 38 + 15 * i, s, GY, 11, "middle")
 
 def mux(x, y, w, h, c=WH, label="MUX"):
-    a(f'<polygon points="{x},{y} {x+w},{y+h*0.18} {x+w},{y+h*0.82} {x},{y+h}" fill="{BOX}" stroke="{c}" stroke-width="1.5"/>')
+    a(f'<polygon points="{x},{y} {x+w},{y+h*0.18} {x+w},{y+h*0.82} {x},{y+h}" fill="{TINT[c]}" stroke="{c}" stroke-width="1.5"/>')
 
 def gate(x, y, s="&", c=WH):
-    a(f'<rect x="{x}" y="{y}" width="28" height="24" rx="10" fill="{BOX}" stroke="{c}" stroke-width="1.5"/>')
+    a(f'<rect x="{x}" y="{y}" width="28" height="24" rx="10" fill="{TINT[c]}" stroke="{c}" stroke-width="1.5"/>')
     text(x + 14, y + 16, s, c, 13, "middle", True)
 
 def latch(x, y0, y1, name, num):
-    a(f'<rect x="{x}" y="{y0}" width="28" height="{y1-y0}" fill="{BOX}" stroke="{WH}" stroke-width="1.8"/>')
+    a(f'<rect x="{x}" y="{y0}" width="28" height="{y1-y0}" rx="4" fill="{WH}" stroke="{WH}" stroke-width="1.8"/>')
     for i, ch in enumerate(name):
-        text(x + 14, (y0 + y1) / 2 - 30 + 16 * i, ch, WH, 14, "middle", True)
+        text(x + 14, (y0 + y1) / 2 - 30 + 16 * i, ch, BG, 14, "middle", True)
     text(x + 14, y1 + 18, f"({num})", GY, 11, "middle")
 
 def stub_in(x, y, label, c, side="left", length=24):
@@ -73,7 +85,7 @@ def stub_out(x, y, label, c, side="right", length=24):
 
 # ---------------------------------------------------------------- cabecera
 a(f'<svg xmlns="http://www.w3.org/2000/svg" width="{W}" height="{H}" viewBox="0 0 {W} {H}" '
-  f'font-family="Consolas, \'DejaVu Sans Mono\', \'Courier New\', monospace" xml:space="preserve">')
+  f'font-family="{SANS}" xml:space="preserve">')
 a('<title>RISC-V core del TP3: datapath y control (riscv_core.v)</title>')
 a("<defs>")
 for c in (WH, BL, OR, PK, GR, GY):
@@ -81,12 +93,8 @@ for c in (WH, BL, OR, PK, GR, GY):
       f'<path d="M0,1 L9,5 L0,9 z" fill="{c}"/></marker>')
 a("</defs>")
 a(f'<rect width="{W}" height="{H}" fill="{BG}"/>')
-text(24, 34, "RISC-V CORE (TP3) — DATAPATH Y CONTROL", WH, 20, bold=True)
-text(24, 56, "riscv_core.v · cada cable es una señal real del RTL · (n) = parada del plan de estudio (docs/defensa.md)", GY, 12)
-
-# etapas
-for x, s in ((230, "IF"), (870, "ID"), (1620, "EX"), (2110, "MEM"), (2450, "WB")):
-    text(x, 92, s, GY, 16, "middle", True)
+text(24, 36, "RISC-V CORE (TP3) — DATAPATH Y CONTROL", WH, 24, bold=True)
+text(24, 58, "riscv_core.v · cada cable es una señal real del RTL · (n) = parada del plan de estudio (docs/defensa.md)", GY, 12)
 
 # ---------------------------------------------------------------- lanes
 Y_EN = 112                      # core_en (Debug Unit)
@@ -100,11 +108,22 @@ Y_WBK = 1480                    # escritura en el banco (vuelve de WB)
 LAT_Y0, LAT_Y1 = 150, 1180
 X_IFID, X_IDEX, X_EXMEM, X_MEMWB = 440, 1250, 1960, 2250
 
+# ---------------------------------------------------------------- etapas
+# bandas alternadas: cada etapa va del centro de un latch al del siguiente
+bounds = [16, X_IFID + 14, X_IDEX + 14, X_EXMEM + 14, X_MEMWB + 14, W - 16]
+for i in range(0, 5, 2):
+    a(f'<rect x="{bounds[i]}" y="66" width="{bounds[i+1] - bounds[i]}" height="1430" fill="{BAND}"/>')
+for x, s in ((230, "IF · búsqueda"), (870, "ID · decodificación"), (1620, "EX · ejecución"),
+             (2110, "MEM · memoria"), (2430, "WB · escritura")):
+    pw = 7.6 * len(s) + 28
+    a(f'<rect x="{x - pw / 2}" y="68" width="{pw}" height="24" rx="12" fill="{WH}"/>')
+    text(x, 85, s, BG, 13, "middle", True)
+
 # ---------------------------------------------------------------- core_en (verde)
 text(24, Y_EN + 18, "global_stall_i (Debug Unit)", GR, 11)
 wire([(24, Y_EN), (96, Y_EN)], GR, arrow=False)
-a(f'<polygon points="96,{Y_EN-9} 96,{Y_EN+9} 114,{Y_EN}" fill="{BOX}" stroke="{GR}" stroke-width="1.5"/>')
-a(f'<circle cx="118" cy="{Y_EN}" r="4" fill="{BOX}" stroke="{GR}" stroke-width="1.5"/>')
+a(f'<polygon points="96,{Y_EN-9} 96,{Y_EN+9} 114,{Y_EN}" fill="{TINT[GR]}" stroke="{GR}" stroke-width="1.5"/>')
+a(f'<circle cx="118" cy="{Y_EN}" r="4" fill="{TINT[GR]}" stroke="{GR}" stroke-width="1.5"/>')
 wire([(122, Y_EN), (2690, Y_EN)], GR, arrow=False, w=2.2)
 text(600, Y_EN - 6, "core_en = ~global_stall_i   (riscv_core.v:146)", GR, 11)
 for x in (195, X_IFID + 14, X_IDEX + 14, X_EXMEM + 14, X_MEMWB + 14, 2094, 2580):
@@ -288,14 +307,14 @@ text(1501, 687, "[4:0] si", WH, 10, "middle"); text(1501, 702, "shift", WH, 10, 
 wire([(1425, 690), (1460, 690)], WH)
 wire([(1542, 690), (1580, 690)], WH)
 # ALU
-a(f'<polygon points="1580,520 1680,560 1680,720 1580,760 1580,665 1600,640 1580,615" fill="{BOX}" stroke="{WH}" stroke-width="1.8"/>')
+a(f'<polygon points="1580,520 1680,560 1680,720 1580,760 1580,665 1600,640 1580,615" fill="{TINT[WH]}" stroke="{WH}" stroke-width="1.8"/>')
 text(1640, 645, "ALU", WH, 15, "middle", True); text(1640, 662, "(1)", GY, 11, "middle")
 text(1640, 778, "zero, co: sin usar", GY, 10, "middle")
 # alu_control
 box(1560, 360, 140, 70, "alu_control (2)", BL, ["alu_op+funct3+[30]"], fs=12)
 wire([(1600, Y_EX), (1600, 360)], BL); dot(1600, Y_EX, BL)
 wire([(1710, Y_INS), (1710, 395), (1700, 395)], WH); dot(1710, Y_INS)
-text(1714, 470, "funct3, bit 30", GY, 10)
+text(1714, 470, "funct3,", GY, 10); text(1714, 485, "bit 30", GY, 10)
 wire([(1630, 430), (1630, 540)], BL)
 text(1634, 452, "alu_ctrl", BL, 10)
 dot(1630, 470, BL)
@@ -410,7 +429,7 @@ eqs = [
     ("core_en = ~global_stall_i   (la Debug Unit congela todo el core)", GR),
 ]
 for i, (s, c) in enumerate(eqs):
-    text(40, 1556 + 22 * i, s, c, 13)
+    text(40, 1556 + 22 * i, s, c, 13, mono=True)
 
 lx = 1220
 text(lx, 1530, "LEYENDA", WH, 13, bold=True)
@@ -428,3 +447,32 @@ text(lx, 1700, "etiqueta con flecha corta = la señal llega desde el módulo nom
 a("</svg>")
 open(OUT, "w", encoding="utf-8").write("\n".join(out))
 print("ok", OUT, len(out), "elementos")
+
+# ---------------------------------------------------------------- PDF (--pdf)
+# Imprime el SVG a PDF (vectorial, A3 apaisado) con Edge o Chrome headless.
+if "--pdf" in sys.argv:
+    pdf = OUT[:-4] + ".pdf"
+    cands = [shutil.which(n) for n in ("msedge", "chrome", "google-chrome", "chromium")]
+    cands += [r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+              r"C:\Program Files\Google\Chrome\Application\chrome.exe"]
+    browser = next((c for c in cands if c and os.path.exists(c)), None)
+    if browser is None:
+        sys.exit("--pdf: no encontré Edge ni Chrome")
+    page = ("<!doctype html><html><head><meta charset='utf-8'>"
+            "<title>RISC-V core (TP3): datapath y control</title><style>"
+            "@page { size: A3 landscape; margin: 8mm; }"
+            "html, body { margin: 0; } body { height: 278mm; display: flex; align-items: center; }"
+            "svg { display: block; width: 100%; height: auto; }"
+            "</style></head><body>" + "\n".join(out) + "</body></html>")
+    with tempfile.TemporaryDirectory() as tmp:
+        html = os.path.join(tmp, "datapath.html")
+        open(html, "w", encoding="utf-8").write(page)
+        if os.path.exists(pdf):
+            os.remove(pdf)
+        subprocess.run([browser, "--headless=new", "--disable-gpu", "--no-pdf-header-footer",
+                        f"--user-data-dir={os.path.join(tmp, 'perfil')}",
+                        f"--print-to-pdf={pdf}", "file:///" + html.replace(os.sep, "/")],
+                       check=True, timeout=120, capture_output=True)
+    if not os.path.exists(pdf):
+        sys.exit("--pdf: el navegador no generó el PDF")
+    print("ok", pdf)

@@ -9,6 +9,13 @@ Criterio: todo lo que dice este documento sale del código (se cita
 `archivo:línea`) o de una simulación del RTL real. Cuando algo no está
 cubierto por un test del repositorio, se dice explícitamente.
 
+Algunas secciones mencionan **el fuzzer**: un generador de programas
+aleatorios que corre cada programa sobre el RTL y sobre un modelo de la
+ISA en Python y compara los resultados (también con el núcleo congelado
+al azar entre ciclos). Se usó durante la revisión previa a la defensa,
+pero **no está en el repositorio**: en la defensa se pueden mostrar los
+testbenches de `tp3/tb/`, no el fuzzer.
+
 ## Índice
 
 0. [Estado del proyecto](#0-estado-del-proyecto)
@@ -28,6 +35,9 @@ cubierto por un test del repositorio, se dice explícitamente.
 14. [Parada 10 — id_ex_reg](#14-parada-10--id_ex_reg-id_ex_regv)
 15. [Parada 11 — ex_mem_reg y mem_wb_reg](#15-parada-11--ex_mem_reg-y-mem_wb_reg-ex_mem_regv-mem_wb_regv)
 16. [Parada 12 — forwarding_unit](#16-parada-12--forwarding_unit-forwarding_unitv)
+17. [Parada 13 — hazard_unit](#17-parada-13--hazard_unit-hazard_unitv)
+18. [Parada 16 — debug_unit](#18-parada-16--debug_unit-debug_unitv)
+19. [Parada 17 — dump_unit y riscv_uart_top (y el top de la placa)](#19-parada-17--dump_unit-y-riscv_uart_top-dump_unitv-riscv_uart_topv)
 
 Apéndices (material de consulta, se actualiza con cada parada):
 
@@ -39,29 +49,51 @@ Apéndices (material de consulta, se actualiza con cada parada):
 
 ## 0. Estado del proyecto
 
-Al 2026-10-07:
+Al 2026-10-12:
 
-- **Simulación:** la regresión completa pasa 750/750 (664 chequeos en
-  Verilog con Icarus + 86 tests de Python del host). Cómo correr cada
+- **Simulación:** la regresión completa pasa **796/796**: 710 chequeos en
+  Verilog con Icarus (incluidos los 162 de la ALU de TP1 y los 46 del
+  panel de la placa) + 86 tests de Python del host. Cómo correr cada
   testbench: `tp3/README.md`.
-- **Pendiente — hardware (necesita Vivado y la placa):**
-  1. Re-sintetizar. La última medición de timing es de un RTL anterior:
-     a 100MHz el diseño **no cierra timing** (WNS = −3,633ns; el camino
-     crítico pasa por el adelantamiento EX→ID hacia el comparador de
-     saltos, ver [informe §3.8](../informe.md)).
-  2. Aplicar el Clock Wizard a 50MHz (con `CLK_FREQ = 50_000_000` en el
-     top y `rst_i | ~locked` como reset).
-  3. Medir timing y skew a 50MHz y documentarlo.
-  4. Probar en la Basys 3.
+- **Síntesis e implementación (Vivado 2026.1, Basys 3): hechas.** El top
+  para la placa es [riscv_fpga_top.v](../rtl/fpga/riscv_fpga_top.v)
+  (§1.2): el Clock Wizard genera **65MHz** a partir del oscilador de
+  100MHz de la placa, y el diseño **cierra timing**: WNS = +0,254ns,
+  TNS = 0, WHS = +0,090ns (implementación del 2026-10-12, ya con el
+  panel).
+- **Recursos:** 5358 LUTs (1760 de ellas usadas como memoria: la imem y
+  la dmem), 2173 flip-flops, **0 Block RAM** y 1 MMCM (el Clock Wizard).
+- **Pendiente:** probar en la Basys 3 con los programas de
+  [scripts/](../scripts/README.md), y la parada 19 (clock, camino crítico
+  y skew en detalle).
 
-  Checklist paso a paso: [synt/README.md](../synt/README.md), sección
-  "Pendiente".
+**Si preguntan por el clock** (el enunciado lo pregunta explícitamente):
 
-Si preguntan por la frecuencia: a 100MHz no cierra porque se priorizó el
-CPI (resolver saltos en ID con adelantamiento desde EX) por sobre la
-frecuencia de clock; el costo es un camino crítico más largo, y se
-resuelve bajando el clock con el Clock Wizard, nunca dividiéndolo con
-lógica propia. Justificación completa en el informe §3.1 y §3.8.
+- *¿Por qué no 100MHz?* Porque se priorizó el CPI por sobre la
+  frecuencia: los saltos se resuelven en ID con adelantamiento desde EX
+  (§11.4), y eso deja en serie, en un mismo ciclo, la ALU y el comparador
+  de saltos.
+- *¿Cuál es el camino crítico?* En el núcleo: selector de forwarding →
+  ALU → adelantamiento a ID → comparador → `branch_taken` → mux del
+  próximo PC. Tarda 14,47ns (15 niveles de lógica; ~76% del tiempo es
+  ruteo). El peor de todo el diseño es la misma cadena pero terminando en
+  la Dump Unit, en la captura del STATUS (que incluye `branch_taken`):
+  14,98ns.
+- *¿Genera skew?* Sí, poco: −0,050ns en el peor camino (el clock llega un
+  poco antes al flip-flop de destino que al de origen, y al dato le queda
+  ese tiempo de menos). Vivado ya lo descuenta del slack, así que el WNS
+  positivo lo incluye. Es chico porque el clock viaja por la red global
+  (BUFG).
+- *¿Cómo se eligió la frecuencia?* Se implementó el diseño a 50, 60, 65,
+  70 y 75MHz: cierra sin excepciones hasta 65MHz, a 70MHz sólo falla la
+  captura del STATUS y a 75MHz ya falla un camino del núcleo (su límite
+  está cerca de 72MHz). Además, 65MHz deja la UART a +0,76% de 115200
+  baudios ([riscv_fpga_top.v:20-26](../rtl/fpga/riscv_fpga_top.v#L20-L26)).
+- *¿El Clock Wizard no es "intervenir el clock"?* No: configura un MMCM,
+  el bloque dedicado del FPGA para sintetizar frecuencias, y su salida
+  entra a la red global de clock igual que el oscilador. No se divide con
+  un contador ni se gatea
+  ([riscv_fpga_top.v:13-18](../rtl/fpga/riscv_fpga_top.v#L13-L18)).
 
 ---
 
@@ -72,36 +104,60 @@ lógica propia. Justificación completa en el informe §3.1 y §3.8.
 | Pieza | Dónde está |
 |---|---|
 | Pipeline RISC-V de 5 etapas | `tp3/rtl/core/` |
-| Debug Unit por UART | `tp3/rtl/debug/` + la UART de TP2 (`tp2/rtl/`), reutilizada **sin modificar** |
+| Debug Unit por UART | `tp3/rtl/debug/` + la UART de TP2 (`tp2/rtl/`), reutilizada con un solo cambio (abajo) |
 | Interfaz para usarlo (ensamblador, CLI, GUI) | `tp3/host/` |
+
+Además, para la placa: `tp3/rtl/fpga/` (el top con el Clock Wizard y el
+panel de display y LEDs, §1.2) y diez programas de prueba en
+[tp3/scripts/](../scripts/README.md), cada uno pensado para mostrar una
+parte del enunciado.
+
+**El único cambio en la UART de TP2** está en `baud_generator.v`. El
+registro que recuerda el selector de baudios (`baud_sel_reg`, para
+detectar cuándo cambia) se cargaba con la entrada `baud_sel_i` dentro de
+la rama del reset asíncrono. Un reset asíncrono sólo puede cargar una
+constante (el flip-flop de la FPGA tiene preset y clear, nada más), así
+que Vivado lo armaba con un latch y lógica sobre esos pines, y lo marcaba
+en el reporte de metodología. Se pasó a un flip-flop sin reset
+([baud_generator.v:54-64](../../tp2/rtl/baud_generator.v#L54-L64)).
 
 ### 1.2 Cómo se conectan
 
 ```
-                 ┌──────────────────────────┐
-                 │  PC (Python)             │
-                 │  ensamblador, CLI, GUI   │
-                 └────────────┬─────────────┘
-                              │ UART 115200 8N1 (ida y vuelta)
- ┌ FPGA Basys 3 · riscv_uart_top ─────────────────────────────┐
- │               ┌───────────▼──────────────┐                 │
- │               │ UART de TP2              │                 │
- │               │ rx, tx, interface        │                 │
- │               └─────┬──────────────▲─────┘                 │
- │          bytes que  │              │ bytes que             │
- │          llegan     ▼              │ salen                 │
- │      ┌──────────────────┐   ┌──────┴───────────┐           │
- │      │ debug_unit       │   │ dump_unit        │           │
- │      │ comandos y carga │   │ volcado (Tx)     │           │
- │      └────────┬─────────┘   └──────▲───────────┘           │
- │  stall,       │                    │ estado completo       │
- │  soft-reset,  ▼                    │ (latches, regs, dmem) │
- │  carga ┌─────────────────────────────────────────┐         │
- │        │ riscv_core                              │         │
- │        │ pipeline IF · ID · EX · MEM · WB        │         │
- │        │ + imem + dmem                           │         │
- │        └─────────────────────────────────────────┘         │
- └────────────────────────────────────────────────────────────┘
+                   ┌──────────────────────────┐
+                   │  PC (Python)             │
+                   │  ensamblador, CLI, GUI   │
+                   └────────────┬─────────────┘
+                                │ UART 115200 8N1 (ida y vuelta)
+ ┌ FPGA Basys 3 · riscv_fpga_top ─────────────────────────────────┐
+ │ ┌ riscv_uart_top ────────────────────────────────────────────┐ │
+ │ │               ┌───────────▼──────────────┐                 │ │
+ │ │               │ UART de TP2              │                 │ │
+ │ │               │ rx, tx, interface        │                 │ │
+ │ │               └─────┬──────────────▲─────┘                 │ │
+ │ │          bytes que  │              │ bytes que             │ │
+ │ │          llegan     ▼              │ salen                 │ │
+ │ │      ┌──────────────────┐   ┌──────┴───────────┐           │ │
+ │ │      │ debug_unit       │   │ dump_unit        │           │ │
+ │ │      │ comandos y carga │   │ volcado (Tx)     │           │ │
+ │ │      └────────┬─────────┘   └──────▲───────────┘           │ │
+ │ │  stall,       │                    │ estado completo       │ │
+ │ │  soft-reset,  ▼                    │ (latches, regs, dmem) │ │
+ │ │  carga ┌─────────────────────────────────────────┐         │ │
+ │ │        │ riscv_core                              │         │ │
+ │ │        │ pipeline IF · ID · EX · MEM · WB        │         │ │
+ │ │        │ + imem + dmem                           │         │ │
+ │ │        └─────────────────────────────────────────┘         │ │
+ │ └────────────────────────────────┬───────────────────────────┘ │
+ │                                  │ estado del núcleo y de la   │
+ │                                  ▼ Debug Unit (sólo lectura)   │
+ │              ┌──────────────────────────────────────┐          │
+ │              │ panel_basys3: display de 7 segmentos │          │
+ │              │ y 16 LEDs; sólo observa              │          │
+ │              └──────────────────────────────────────┘          │
+ │  clk_wiz_0 (Clock Wizard): de los 100MHz de la placa saca      │
+ │  los 65MHz que usan todos los bloques de este recuadro         │
+ └────────────────────────────────────────────────────────────────┘
 ```
 
 - `debug_unit` usa sólo el lado de **recepción** de la UART (comandos y
@@ -110,7 +166,20 @@ lógica propia. Justificación completa en el informe §3.1 y §3.8.
   entre las dos.
 - `debug_unit` es la única que controla al core: lo congela
   (`global_stall_i`), lo resetea (`core_soft_reset`) y le carga la
-  memoria de programa y de datos.
+  memoria de programa y de datos (§18).
+- `riscv_fpga_top` existe sólo para la placa: genera el clock con el
+  Clock Wizard (§0), fija la UART en 115200 baudios y agrega el panel.
+  Los testbenches simulan `riscv_uart_top`, porque Icarus no conoce el IP
+  del Clock Wizard
+  ([riscv_fpga_top.v:5-11](../rtl/fpga/riscv_fpga_top.v#L5-L11),
+  [:49-52](../rtl/fpga/riscv_fpga_top.v#L49-L52); detalle en §19.5).
+- `panel_basys3` sólo observa: ninguna de sus salidas vuelve al núcleo.
+  El display muestra qué está haciendo la placa (`rISC-5` al encender,
+  `LoAd` durante una carga, `rUn` y una animación mientras corre, `HALt`
+  alternando con los ciclos al terminar, `StOP` tras una pausa, y
+  `CYCLE_COUNT` en paso a paso); los LEDs muestran los riesgos del ciclo
+  con las mismas reglas que la GUI
+  ([panel_basys3.v:5-35](../rtl/fpga/panel_basys3.v#L5-L35)).
 
 ### 1.3 El recorrido de un programa, de punta a punta
 
@@ -327,13 +396,13 @@ Estado: ✅ vista · ⏳ pendiente.
 | 10 | [id_ex_reg.v](../rtl/core/id_ex_reg.v) | Todo lo que produce ID | EX | Burbuja = todo el control a 0 | ✅ §14 |
 | 11 | [ex_mem_reg.v](../rtl/core/ex_mem_reg.v), [mem_wb_reg.v](../rtl/core/mem_wb_reg.v) | EX / MEM | MEM / WB | Sin burbuja ni flush: sólo se congelan | ✅ §15 |
 | 12 | [forwarding_unit.v](../rtl/core/forwarding_unit.v) | `rs` de ID y EX; `rd` de EX, MEM, WB | Muxes de operandos (EX) y del comparador (ID) | De dónde sale cada operando | ✅ §16 |
-| 13 | [hazard_unit.v](../rtl/core/hazard_unit.v) | ID, loads en EX/MEM, `branch_taken` | PC, IF/ID, ID/EX | Cuándo frenar, burbujear o vaciar | ⏳ |
+| 13 | [hazard_unit.v](../rtl/core/hazard_unit.v) | ID, loads en EX/MEM, `branch_taken` | PC, IF/ID, ID/EX | Cuándo frenar, burbujear o vaciar | ✅ §17 |
 | 14a | [riscv_core.v](../rtl/core/riscv_core.v) — IF + ID | | | PC, mux del próximo PC, forwarding hacia ID | ⏳ |
 | 14b | riscv_core.v — EX + MEM + WB | | | Muxes de la ALU, PC+4 de jal/jalr, habilitación de store y de WB | ⏳ |
 | 14c | riscv_core.v — control de flujo | | | `core_en`, contador de ciclos, HALT drenando | ⏳ |
 | 15 | Verlo andar | | | Un programa real ciclo a ciclo (`tb_pipeline_trace`) | ⏳ |
-| 16 | [debug_unit.v](../rtl/debug/debug_unit.v) | | | Comandos, carga, RUN/STEP/pausa, soft-reset | ⏳ |
-| 17 | [dump_unit.v](../rtl/debug/dump_unit.v) + [riscv_uart_top.v](../rtl/debug/riscv_uart_top.v) | | | Qué se manda y en qué orden; cableado | ⏳ |
+| 16 | [debug_unit.v](../rtl/debug/debug_unit.v) | Bytes de la UART (lado Rx), `core_halted`, fin del volcado | Core (congelar, soft-reset, carga), `dump_unit` (disparo) | Comandos, carga, RUN/STEP/pausa, soft-reset | ✅ §18 |
+| 17 | [dump_unit.v](../rtl/debug/dump_unit.v) + [riscv_uart_top.v](../rtl/debug/riscv_uart_top.v) | Todo el estado del core (latches, registros, dmem por el puerto de debug) | UART (lado Tx) | Qué se manda y en qué orden; cableado | ✅ §19 |
 | 18 | Host: `riscv_asm.py` → `riscv_protocol.py` → `riscv_client.py` → GUI | | | | ⏳ |
 | 19 | Clock, camino crítico, skew + simulacro | | | | ⏳ |
 
@@ -417,15 +486,15 @@ grande (es de 2720 × 1720).
 
 | Color | Qué es |
 |---|---|
-| Blanco | Datapath: los datos que avanzan, y la escritura que vuelve de WB al banco |
-| Azul | Señales de control: de `control_unit` a los latches, agrupadas como en el Patterson (**EX**: `alu_src_a/b`, `alu_op`, `is_jal`, `is_jalr` · **M**: `mem_read`, `mem_write` · **WB**: `reg_write`, `mem_to_reg`, `is_halt`), y cada grupo termina en la etapa que lo usa |
-| Naranja | Riesgos de datos: `forwarding_unit`, los muxes de forwarding, el stall y la burbuja |
-| Rosa | Riesgos de control: destino y `branch_taken` de `branch_unit`, y el flush de IF/ID |
-| Verde | Debug Unit: `core_en` (el bus de arriba que llega a cada `enable`), la carga de las memorias y las salidas de debug |
+| Gris oscuro | Datapath: los datos que avanzan, y la escritura que vuelve de WB al banco |
+| Verde azulado | Señales de control: de `control_unit` a los latches, agrupadas como en el Patterson (**EX**: `alu_src_a/b`, `alu_op`, `is_jal`, `is_jalr` · **M**: `mem_read`, `mem_write` · **WB**: `reg_write`, `mem_to_reg`, `is_halt`), y cada grupo termina en la etapa que lo usa |
+| Violeta | Riesgos de datos: `forwarding_unit`, los muxes de forwarding, el stall y la burbuja |
+| Rojo | Riesgos de control: destino y `branch_taken` de `branch_unit`, y el flush de IF/ID |
+| Ocre | Debug Unit: `core_en` (el bus de arriba que llega a cada `enable`), la carga de las memorias y las salidas de debug |
 
 Lo que conviene mirar:
 
-- **El bus verde de arriba** es `core_en = ~global_stall_i`. Llega al
+- **El bus ocre de arriba** es `core_en = ~global_stall_i`. Llega al
   `enable` del PC, de los 4 latches, del store de la `dmem` y de la
   escritura del banco, y al contador de ciclos: así se congela todo el
   core para el modo paso a paso **sin tocar el clock**.
@@ -444,7 +513,9 @@ Lo que conviene mirar:
   [hazard_unit.v:73-93](../rtl/core/hazard_unit.v#L73-L93).
 
 Si cambia el cableado de `riscv_core.v`, el diagrama se regenera con
-`python tp3/docs/img/gen_datapath_control.py`.
+`python tp3/docs/img/gen_datapath_control.py`; con `--pdf` también
+sale [img/datapath_control.pdf](img/datapath_control.pdf) (A3 apaisado,
+para imprimir).
 
 ---
 
@@ -760,9 +831,13 @@ lectura asíncrona, Vivado usa LUTRAM (memoria armada con LUTs).
   asíncrona el datapath queda igual al del libro.
 - *Costo:* 1024 × 32 bits = 32 Kbit. En la Artix-7 una LUT usada como
   RAM guarda 64 bits, así que son unas **512 LUTs** sólo para guardar,
-  de las 20800 de la xc7a35t (≈2,5%), más la lógica de lectura.
-  (Estimación propia; el comentario de `imem.v` dice ~1-2%. El número
-  real sale de *Report Utilization* en la re-síntesis pendiente.)
+  de las 20800 de la xc7a35t (≈2,5%), más la lógica de lectura
+  (estimación propia; el comentario de `imem.v` dice ~1-2%). Medido en
+  Vivado (implementación del 2026-10-12): el diseño completo usa **1760
+  LUTs como RAM distribuida** (la imem y la dmem juntas) y **0 Block
+  RAM**. El reporte global no separa cuánto es de cada memoria; para eso
+  hace falta el reporte por jerarquía (*Report Utilization* →
+  *Hierarchy*).
 
 ### 6.4 Ejemplos (simulación de la `imem` real)
 
@@ -776,7 +851,7 @@ lectura asíncrona, Vivado usa LUTRAM (memoria armada con LUTs).
 | `0x1004` | 1 | `0x000000A1` (fuera de rango: se pliega) |
 
 El borrado tarda **una palabra por ciclo** (~1024 ciclos con
-`clear_busy_o = 1`, unos 10µs a 100MHz), y después todo lee `0x00000000`.
+`clear_busy_o = 1`, unos 16µs a 65MHz), y después todo lee `0x00000000`.
 
 **¿Por qué vaciar la `imem` al reprogramar?** Simulación del core real:
 primero un programa A de 6 instrucciones (`x1..x5 = 11..15` y `halt`);
@@ -809,8 +884,8 @@ bytes ya armados por la UART de TP2.
                                  avisa rx_empty = 0      y lo interpreta  addr/data          su flanco
 ```
 
-([riscv_uart_top.v:100-114](../rtl/debug/riscv_uart_top.v#L100-L114),
-[:141-157](../rtl/debug/riscv_uart_top.v#L141-L157),
+([riscv_uart_top.v:105-119](../rtl/debug/riscv_uart_top.v#L105-L119),
+[:146-162](../rtl/debug/riscv_uart_top.v#L146-L162),
 [debug_unit.v:174-275](../rtl/debug/debug_unit.v#L174-L275),
 [riscv_core.v:173-182](../rtl/core/riscv_core.v#L173-L182).) La vuelta
 (el volcado) va por el otro lado: `dump_unit` → `uart_interface` (Tx) →
@@ -832,8 +907,8 @@ Con `CMD_LOAD_DATA` (`0x11`) se recorren los mismos estados, pero
 ([debug_unit.v:43-47](../rtl/debug/debug_unit.v#L43-L47)).
 
 Un buffer de un solo byte alcanza: a 115200 baudios cada byte tarda
-~87µs en llegar (~8700 ciclos a 100MHz), la `debug_unit` lo consume en
-un ciclo, y la única espera larga (el borrado, ~10µs) es más corta que
+~87µs en llegar (~5600 ciclos a 65MHz), la `debug_unit` lo consume en
+un ciclo, y la única espera larga (el borrado, ~16µs) es más corta que
 lo que tarda el byte siguiente.
 
 ### 6.6 Cómo se prueba
@@ -897,7 +972,8 @@ loop:
 | `dmem` después (escrita por el programa) | 3 | 7 | 10 | 20 | 5 | **45** |
 
 (37 ciclos: el `add` usa `x4` justo después del `lw` que lo trae, y el
-pipeline frena un ciclo por vuelta — *load-use hazard*, parada 13.)
+pipeline frena un ciclo por vuelta — *load-use hazard*, §17. Es
+`scripts/04_suma_arreglo.asm` con los datos de `04_datos.txt`.)
 
 **Por qué es una memoria separada de la `imem` (Harvard):** así IF
 (busca una instrucción) y MEM (hace un load/store) acceden a memoria en
@@ -922,7 +998,7 @@ y entiende **bytes y medias palabras**, no sólo palabras.
 ¿Por qué 256 en el top? Porque el volcado manda **toda** la `dmem` en
 cada `CMD_STEP`/`CMD_RUN`: con 256 palabras, un volcado completo tarda
 ~100ms a 115200 baudios; con 1024 serían ~375ms
-([riscv_uart_top.v:37-40](../rtl/debug/riscv_uart_top.v#L37-L40)).
+([riscv_uart_top.v:41-44](../rtl/debug/riscv_uart_top.v#L41-L44)).
 
 ### 7.2 Puertos
 
@@ -1036,8 +1112,9 @@ ejemplo).
 | `x9` | `0x00ABAB01` | `lw` a `0x2` (desalineado) lee la palabra alineada de `0x0` |
 
 Terminó por HALT en 18 ciclos, sin stalls. Coincide con el modelo de
-referencia a nivel ISA y da lo mismo corrido con congelamientos
-aleatorios del core.
+la ISA del fuzzer y da lo mismo corrido con congelamientos aleatorios
+del core (verificación fuera del repositorio, ver el criterio al
+principio). Es el mismo programa de `scripts/03_memoria.asm`.
 
 ### 7.5 Cómo se prueba
 
@@ -1047,8 +1124,11 @@ aleatorios del core.
   de debug no interfiere con el del pipeline, y el borrado.
 - Sección 3 de [tb_riscv_core.v](../tb/tb_riscv_core.v): loads y stores
   de todos los anchos dentro del pipeline completo.
-- Pendiente de Vivado: confirmar en *Report Utilization* que la escritura
-  por bytes (`sb`/`sh`) sigue infiriendo LUTRAM.
+- Vivado (implementación del 2026-10-12) confirma que la escritura por
+  bytes (`sb`/`sh`) sigue infiriendo LUTRAM: hay 0 Block RAM, y el
+  diseño entero tiene 2173 flip-flops, menos que los 8192 bits de la
+  `dmem`. Si se hubiera armado con flip-flops sueltos, como pasó en la
+  primera síntesis (§6.3), no podría ser.
 
 Preguntas: §B.7.
 
@@ -1124,7 +1204,7 @@ store de la `dmem`, §7.3).
 [informe §3.5](../informe.md)). Es la **corrección** de un bug que se
 encontró al integrar el core en la Fase 1: la primera versión del banco
 no tenía bypass. **El diseño actual sí lo tiene y funciona** (regresión
-completa y fuzzer). El problema que resuelve: cuando una instrucción
+completa, y también el fuzzer fuera del repositorio). El problema que resuelve: cuando una instrucción
 depende de otra que está **exactamente 3 instrucciones antes**:
 
 - cuando la consumidora está en ID (leyendo el banco), la productora está
@@ -1295,9 +1375,9 @@ imm = 1 1 111111 1010 0 (13 bits) = 1111111110100 = −12  → vuelve 3 instrucc
 - [tb_imm_gen.v](../tb/tb_imm_gen.v): 11 chequeos, valores positivos y
   negativos en los 5 formatos (I: +100, −5, 0; S: −4, +20; B: +8, −8;
   U: `0xABCDE000`; J: +2, −2, +4096).
-- Indirectamente, todos los tests del core y el fuzzer: cualquier error
-  en un formato haría saltar a un lugar equivocado o calcular una
-  dirección incorrecta.
+- Indirectamente, todos los tests del core (y el fuzzer, fuera del
+  repositorio): cualquier error en un formato haría saltar a un lugar
+  equivocado o calcular una dirección incorrecta.
 
 Preguntas: §B.9.
 
@@ -1461,15 +1541,15 @@ adelantados** y sólo compara y suma.
 
 ### 11.3 Recorrido del código
 
-- **Condición** ([branch_unit.v:38-39](../rtl/core/branch_unit.v#L38-L39)):
+- **Condición** ([branch_unit.v:39-40](../rtl/core/branch_unit.v#L39-L40)):
   `funct3[0]` distingue `beq` (0: ¿iguales?) de `bne` (1: ¿distintos?).
   Alcanza con un bit porque `control_unit` ya filtró cualquier otro
   `funct3` (`blt`, `bge`...) como HALT implícito (§10.3). Sin ese filtro,
   un `blt` llegaría acá y se evaluaría como `beq`.
-- **¿Se salta?** ([:41](../rtl/core/branch_unit.v#L41)):
+- **¿Se salta?** ([:42](../rtl/core/branch_unit.v#L42)):
   `branch_taken = is_jal | is_jalr | (is_branch & condición)`. `jal` y
   `jalr` se toman siempre.
-- **¿A dónde?** ([:43-46](../rtl/core/branch_unit.v#L43-L46)):
+- **¿A dónde?** ([:44-47](../rtl/core/branch_unit.v#L44-L47)):
   - `beq`/`bne`/`jal`: `PC + imm`.
   - `jalr`: `(rs1 + imm)` con el bit 0 forzado a 0 (así lo define la
     especificación).
@@ -1517,8 +1597,7 @@ termina casi cualquier loop (`addi x1, x1, 1` + `bne x1, x2, loop`).
 Medido en el informe: **12–17% menos ciclos** en programas con loops
 (suma de arreglo, bubble sort, Fibonacci). El precio: la ALU y el
 comparador quedan en serie en un mismo ciclo, que es **el camino crítico**
-medido en Vivado (§0, [informe §3.8](../informe.md)) — por eso el clock
-baja a 50MHz. Se priorizó el CPI (lo que se ve en `CYCLE_COUNT`) sobre la
+medido en Vivado (§0) — por eso el clock baja a 65MHz. Se priorizó el CPI (lo que se ve en `CYCLE_COUNT`) sobre la
 frecuencia, que en este sistema queda tapada por los ~107ms de cada
 volcado por UART.
 
@@ -1558,7 +1637,8 @@ ejecutadas + 3 (llenado del pipeline) + flushes + stalls`.
   valor de retorno y destino), 5 (saltos tomados y no tomados, flush), 8
   (load antes de un salto, sin y con una instrucción en el medio).
 - El adelantamiento EX → ID lo ejercitan el programa de
-  `tb_pipeline_trace.v` (lo incluye a propósito) y el fuzzer; la
+  `tb_pipeline_trace.v` (lo incluye a propósito) y el fuzzer (fuera del
+  repositorio); la
   comparación de ciclos contra la variante del libro está en el informe
   §3.1. No hay un test del repositorio que verifique la *ausencia* del
   stall con un conteo de ciclos.
@@ -2050,7 +2130,7 @@ Preguntas: §B.15.
 
 Decide **de dónde sale cada operando** cuando el valor que se necesita
 todavía no llegó al banco de registros. No mueve datos: sólo genera los
-**selectores** de los muxes de forwarding (los naranjas del diagrama
+**selectores** de los muxes de forwarding (los violetas del diagrama
 §3.4). Es combinacional y cubre dos destinos:
 
 | Destino | Muxes que controla | Fuentes posibles (selector) |
@@ -2107,7 +2187,7 @@ Hacia ID la prioridad es EX > EX/MEM > MEM/WB, por la misma razón.
 
 - **No sabe si el dato ya existe.** Si el productor es un load, en EX y
   en EX/MEM todavía no está el dato (en EX/MEM está la *dirección*).
-  Ese caso nunca llega a usarse: `hazard_unit` frena antes (parada 13),
+  Ese caso nunca llega a usarse: `hazard_unit` frena antes (§17),
   y cuando la consumidora llega a EX el load ya está en MEM/WB (caso 7
   abajo). El comentario lo dice explícito
   ([forwarding_unit.v:27-32](../rtl/core/forwarding_unit.v#L27-L32)).
@@ -2194,10 +2274,583 @@ lado, y la `hazard_unit` frena cuando todavía no existe (un load).
   la unidad sola. Sin riesgo, EX/MEM y MEM/WB hacia EX, prioridad
   EX/MEM > MEM/WB, `x0` nunca se adelanta, las tres fuentes hacia ID y
   sus prioridades.
-- Dentro del core: los programas de `tb_riscv_core.v` y el fuzzer (miles
-  de dependencias aleatorias a todas las distancias).
+- Dentro del core: los programas de `tb_riscv_core.v`. Además, el fuzzer
+  (fuera del repositorio) probó miles de dependencias aleatorias a todas
+  las distancias.
 
 Preguntas: §B.16.
+
+---
+
+## 17. Parada 13 — `hazard_unit` ([hazard_unit.v](../rtl/core/hazard_unit.v))
+
+### 17.1 La cajita
+
+Decide, cada ciclo, si el pipeline avanza normalmente o si hay que
+**frenar** (stall), **meter una burbuja** o **vaciar** IF/ID. Es
+combinacional y no mueve datos: sólo genera cuatro órdenes para el PC y
+los latches, siempre con enables y nunca tocando el clock
+([hazard_unit.v:5-8](../rtl/core/hazard_unit.v#L5-L8)).
+
+Es la contraparte de la `forwarding_unit` (§16). La `forwarding_unit`
+adelanta un valor que **ya existe** en algún latch. La `hazard_unit`
+frena cuando el valor **todavía no existe** (el dato de un load), y
+también cuando hay que dejar de buscar instrucciones (HALT).
+
+Los tres tipos de riesgo del enunciado, y quién resuelve cada uno:
+
+| Riesgo | Cuándo aparece | Cómo se resuelve | Dónde |
+|---|---|---|---|
+| Estructural | Dos instrucciones quieren el mismo recurso en el mismo ciclo | No aparece: imem y dmem separadas (Harvard), y el banco de registros tiene 2 puertos de lectura y 1 de escritura | §6.2, §7.1, §8.1 |
+| De datos | Una instrucción lee un registro que otra todavía no escribió | Forwarding (`forwarding_unit`, sin perder ciclos); si el dato todavía no existe (load), stall + burbuja (`hazard_unit`) | §16 y esta parada |
+| De control | Un salto cambia el PC cuando ya se buscó la instrucción siguiente | El salto se resuelve en ID, se busca `PC+4` ("no tomado") y, si se toma, lo buscado de más se vacía (flush) | §11.4 y esta parada |
+
+### 17.2 Puertos
+
+```
+ IF/ID: rs1, rs2 (números) ──────────────► ┐                    ┌─► pc_write_en ───► · core_en ─► PC
+ control_unit: uses_rs1/2, is_branch,      │                    ├─► if_id_write_en ► · core_en ─► IF/ID
+   is_jalr, is_halt ─────────────────────► │    hazard_unit     ├─► if_id_flush ──────────────► IF/ID
+ ID/EX: rd, mem_read (¿load en EX?) ─────► │                    └─► id_ex_bubble ─────────────► ID/EX
+ EX/MEM: rd, mem_read (¿load en MEM?) ───► │
+ branch_unit: branch_taken ──────────────► ┘
+```
+
+| Puerto | Viene de / va a | Dónde se cablea |
+|---|---|---|
+| `id_rs1_addr_i`, `id_rs2_addr_i` | ← campos `[19:15]` y `[24:20]` de la instrucción en IF/ID | [riscv_core.v:300-301](../rtl/core/riscv_core.v#L300-L301), [:204-205](../rtl/core/riscv_core.v#L204-L205) |
+| `id_uses_rs1_i`, `id_uses_rs2_i`, `id_is_branch_i`, `id_is_jalr_i`, `id_is_halt_i` | ← `control_unit` (la instrucción en ID) | [riscv_core.v:302-306](../rtl/core/riscv_core.v#L302-L306) |
+| `id_ex_rd_addr_i`, `id_ex_mem_read_i` | ← ID/EX: `rd` (`instr[11:7]`) y si es un load, de la instrucción que está en EX | [riscv_core.v:307-308](../rtl/core/riscv_core.v#L307-L308), [:368](../rtl/core/riscv_core.v#L368) |
+| `ex_mem_rd_addr_i`, `ex_mem_mem_read_i` | ← EX/MEM: lo mismo, de la instrucción que está en MEM | [riscv_core.v:309-310](../rtl/core/riscv_core.v#L309-L310), [:475](../rtl/core/riscv_core.v#L475) |
+| `branch_taken_i` | ← `branch_unit` | [riscv_core.v:311](../rtl/core/riscv_core.v#L311) |
+| `pc_write_en_o`, `if_id_write_en_o` | → se combinan con `core_en` y van al PC y a IF/ID; `pc_write_en` también va al STATUS (bit `stalled`) | [riscv_core.v:148-150](../rtl/core/riscv_core.v#L148-L150), [:296](../rtl/core/riscv_core.v#L296) |
+| `if_id_flush_o` | → `flush_i` de IF/ID | [riscv_core.v:193](../rtl/core/riscv_core.v#L193) |
+| `id_ex_bubble_o` | → `bubble_i` de ID/EX; también va al STATUS (bit `hazard_stall`) | [riscv_core.v:330](../rtl/core/riscv_core.v#L330), [:297](../rtl/core/riscv_core.v#L297) |
+
+Como la `forwarding_unit`, recibe **números** de registro y bits de
+control, nunca valores. Tampoco recibe `core_en`: el congelamiento de la
+Debug Unit se combina afuera (`· core_en`) y en la prioridad de los
+latches, donde congelar le gana a vaciar o burbujear (§12.4, §14.3).
+
+### 17.3 Recorrido del código
+
+Cinco líneas de lógica
+([hazard_unit.v:73-93](../rtl/core/hazard_unit.v#L73-L93)):
+
+```
+load_use   = mem_read@EX · rd@EX≠0 · ((uses_rs1 · rd@EX=rs1) + (uses_rs2 · rd@EX=rs2))
+load_salto = (is_branch + is_jalr) · (load_use + [mem_read@MEM · rd@MEM≠0 · rd@MEM=rs usado])
+stall      = load_use + load_salto
+pc_write_en = if_id_write_en = ~(stall + is_halt)
+id_ex_bubble = stall            if_id_flush = branch_taken · ~stall
+```
+
+1. **Load-use** ([:73-76](../rtl/core/hazard_unit.v#L73-L76)). La
+   instrucción en ID lee el registro que escribe un load que está en EX.
+   - Sólo loads (`mem_read`): el resultado de cualquier otra instrucción
+     existe al final de EX y la `forwarding_unit` lo adelanta; el de un
+     load recién existe al final de MEM.
+   - `rd ≠ 0`: un load a `x0` no produce nada que esperar.
+   - `uses_rs`: sólo cuentan los registros que la instrucción lee de
+     verdad (§10.3), así un inmediato que "parece" un registro no frena.
+2. **Load antes de un salto** ([:78-84](../rtl/core/hazard_unit.v#L78-L84)).
+   El mismo chequeo, pero también contra la instrucción que está en
+   **MEM**, y sólo si la de ID es `beq`/`bne`/`jalr` (`jal` no lee
+   registros). ¿Por qué sólo saltos? Un consumidor común, con el load en
+   MEM, al ciclo siguiente va a estar en EX con el load en WB, y ahí lo
+   adelanta MEM/WB. El salto, en cambio, usa el valor **en ID** (se
+   resuelve ahí, §11.4): necesita el dato un ciclo antes que cualquier
+   otra instrucción. Por eso un load justo antes de un salto cuesta 2
+   ciclos, y 1 si hay una instrucción en el medio.
+3. **stall** ([:86](../rtl/core/hazard_unit.v#L86)) es el OR de los dos.
+   La condición se vuelve a evaluar cada ciclo: mientras el load siga en
+   EX o en MEM, el salto sigue esperando
+   ([:26-31](../rtl/core/hazard_unit.v#L26-L31)).
+4. **HALT** ([:88](../rtl/core/hazard_unit.v#L88)): `halt_freeze` es el
+   `is_halt` de la instrucción en ID.
+5. **Salidas** ([:90-93](../rtl/core/hazard_unit.v#L90-L93)):
+   - `pc_write_en = if_id_write_en = ~(stall + halt)`: frenan el PC e
+     IF/ID, así la instrucción que espera se queda en ID.
+   - `id_ex_bubble = stall`: en el stall entra una burbuja a EX (§14.2).
+     **Nunca por HALT**: el HALT tiene que llegar a WB para marcar que el
+     pipeline quedó vacío (§2.3).
+   - `if_id_flush = branch_taken · ~stall`: un salto tomado vacía IF/ID,
+     **salvo durante un stall**. Mientras el salto espera, todavía no
+     está decidido: el comparador puede estar viendo la *dirección* de un
+     load en vez de su dato (ejemplo 2, abajo), así que `branch_taken`
+     puede valer 1 sin que corresponda. La decisión se repite cuando
+     llega el dato.
+
+     Para un stall de datos hay dos protecciones: el `· ~stall` de acá y
+     la prioridad del latch IF/ID, donde congelar le gana a vaciar
+     (§12.4). Para este caso alcanza con cualquiera de las dos. La del
+     latch es imprescindible igual, porque también cubre el congelamiento
+     de la Debug Unit, que la `hazard_unit` no ve (§12.5).
+
+**Qué ve la PC.** El STATUS del volcado (§19.2) trae dos bits de esta
+unidad: `stalled` (`~pc_write_en`: el PC no avanza, por stall o por un
+HALT en ID) y `hazard_stall` (la burbuja: sólo stall de datos). Si
+`stalled` vale 1 y `hazard_stall` vale 0, es un HALT en ID. El
+congelamiento de la Debug Unit no entra en ninguno de los dos; si
+entrara, todo volcado diría `stalled = 1`
+([riscv_core.v:291-297](../rtl/core/riscv_core.v#L291-L297)).
+
+### 17.4 Ejemplos (simulación del diseño real)
+
+**Ejemplo 1: los cuatro casos en un programa** (con `dmem[0] = 5` y
+`dmem[1] = 7`):
+
+```asm
+0:  lw   x5, 0(x0)      # x5 = 5
+4:  addi x6, x2, 5      # el 5 ocupa el campo rs2 ("x5"), pero es un inmediato
+8:  lw   x1, 4(x0)      # x1 = 7
+12: add  x9, x1, x5     # usa x1 justo después del load
+16: lw   x2, 4(x0)      # x2 = 7
+20: beq  x2, x1, L      # usa x2 justo después del load
+24: addi x3, x0, 99     # se busca, pero el salto la descarta
+28: L: halt
+```
+
+`id_ex_bubble` vale lo mismo que `stall`, y `pc_write_en` =
+`if_id_write_en` valen 0 en los ciclos con stall o con un HALT en ID.
+
+| Ciclo | IF | ID | EX | MEM | WB | load-use | load en MEM | stall | flush | Qué pasa |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 1 | `lw x5` @0 | — | — | — | — | 0 | 0 | 0 | 0 | |
+| 2 | `addi x6` @4 | `lw x5` | — | — | — | 0 | 0 | 0 | 0 | |
+| 3 | `lw x1` @8 | `addi x6` | `lw x5` | — | — | 0 | 0 | 0 | 0 | **Sin stall**: el campo rs2 del `addi` "dice" `x5`, pero es el inmediato (`uses_rs2 = 0`) |
+| 4 | `add x9` @12 | `lw x1` | `addi x6` | `lw x5` | — | 0 | 0 | 0 | 0 | |
+| 5 | `lw x2` @16 | `add x9` | `lw x1` | `addi x6` | `lw x5` | **1** | 0 | **1** | 0 | **Load-use**: `add` lee `x1` y el load está en EX. PC e IF/ID quietos, burbuja a EX |
+| 6 | `lw x2` @16 | `add x9` | burbuja | `lw x1` | `addi x6` | 0 | 1 | 0 | 0 | El load pasó a MEM ("load en MEM" = 1), pero `add` no es un salto: sigue, y en EX toma `x1` de MEM/WB |
+| 7 | `beq` @20 | `lw x2` | `add x9` | burbuja | `lw x1` | 0 | 0 | 0 | 0 | |
+| 8 | `addi x3` @24 | `beq x2, x1` | `lw x2` | `add x9` | burbuja | **1** | 0 | **1** | 0 | Load antes de un salto, 1.er ciclo: el load está en EX |
+| 9 | `addi x3` @24 | `beq` | burbuja | `lw x2` | `add x9` | 0 | **1** | **1** | 0 | 2.º ciclo: el load está en MEM y el salto necesita el dato en ID |
+| 10 | `addi x3` @24 | `beq` | burbuja | burbuja | `lw x2` | 0 | 0 | 0 | **1** | `x2` llega de MEM/WB (`fwd_a_id = 11`): 7 = 7, salto tomado → flush |
+| 11 | `halt` @28 | (flush) | `beq` | burbuja | burbuja | 0 | 0 | 0 | 0 | El `addi x3` desapareció; IF ya está en el destino |
+| 12 | (vacía) @32 | **`halt`** | (flush) | `beq` | burbuja | 0 | 0 | 0 | 0 | HALT en ID: PC e IF/ID quietos, **sin** burbuja |
+| 13 | (vacía) @32 | `halt` | `halt` | (flush) | `beq` | 0 | 0 | 0 | 0 | Copias del halt avanzan |
+| 14 | (vacía) @32 | `halt` | `halt` | `halt` | (flush) | 0 | 0 | 0 | 0 | |
+| 15 | (vacía) @32 | `halt` | `halt` | `halt` | `halt` | 0 | 0 | 0 | 0 | HALT en WB: fin, `CYCLE_COUNT = 14` |
+
+Resultado: `x6 = 5`, `x9 = 12`, `x2 = 7` y `x3 = 0` (el `addi x3` nunca
+se ejecutó). Cuenta de ciclos, como en §11.5: 7 instrucciones ejecutadas
++ 3 de llenado + 3 stalls + 1 flush = 14.
+
+**Ejemplo 2: durante el stall, el salto todavía no está decidido**
+(con `dmem[2] = 7`):
+
+```asm
+0:  addi x1, x0, 8      # x1 = 8
+4:  lw   x2, 8(x0)      # dirección 8, dato 7
+8:  beq  x2, x1, L      # ¿7 == 8? no: no salta
+12: addi x3, x0, 99     # se ejecuta
+16: L: halt
+```
+
+| Ciclo | ID | EX | MEM | WB | `x2` que ve el comparador | `x1` | `branch_taken` | stall | flush | PC |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 4 | `beq` | `lw x2` | `addi x1` | — | 8, la **dirección** del load (salida de EX) | 8 (de EX/MEM) | **1** | 1 | **0** | quieto |
+| 5 | `beq` | burbuja | `lw x2` | `addi x1` | 8, la dirección otra vez (de EX/MEM) | 8 (de MEM/WB) | **1** | 1 | **0** | quieto |
+| 6 | `beq` | burbuja | burbuja | `lw x2` | 7, el **dato** (de MEM/WB) | 8 (del banco) | 0 | 0 | 0 | sigue |
+
+En los ciclos 4 y 5 el comparador compara la dirección del load (8) con
+`x1` (8) y `branch_taken` sale en 1. Como hay stall, ni el PC ni el
+flush se mueven. En el ciclo 6 llega el dato real (7 ≠ 8), el salto no
+se toma y el programa termina con `x3 = 99`, como debe.
+
+**Cuánto cuesta cada caso:**
+
+| Caso | Ciclos que se pierden | Dónde se ve |
+|---|---|---|
+| Load → instrucción que usa el dato | 1 | Ejemplo 1, ciclo 5 |
+| Load → salto que usa el dato | 2 | Ejemplo 1, ciclos 8-9 |
+| Load → otra instrucción → salto que usa el dato | 1 | §11.5 |
+| Dependencia "falsa" (el campo no es un registro) | 0 | Ejemplo 1, ciclo 3 |
+| Cualquier otra dependencia (de una instrucción de ALU, también hacia un salto) | 0: la resuelve el forwarding | §16, §11.5 |
+| Salto tomado | 1 (flush) | Ejemplo 1, ciclo 10 |
+
+### 17.5 Cómo se prueba
+
+- [tb_hazard_unit.v](../tb/tb_hazard_unit.v): 14 chequeos sobre la unidad
+  sola. Cubre:
+  - sin riesgo, load-use y `rd = x0`;
+  - los filtros de `uses_rs` (el campo rs2 de una I-type, el rs1 de
+    `lui`/`jal`);
+  - load antes de un salto, con el load en EX y en MEM;
+  - que el chequeo de MEM no frena a un consumidor común;
+  - `jalr` (y que su campo rs2 no cuenta);
+  - flush, y stall con salto tomado a la vez (gana el stall);
+  - HALT sin burbuja.
+- [tb_riscv_core.v](../tb/tb_riscv_core.v): secciones 7 (load-use,
+  [:471](../tb/tb_riscv_core.v#L471)), 8 (load antes de un salto, a 0 y 1
+  instrucciones de distancia, [:484](../tb/tb_riscv_core.v#L484)), 9
+  (HALT explícito e implícito, [:516](../tb/tb_riscv_core.v#L516)), 11b
+  (`CYCLE_COUNT` exacto con y sin dependencia real,
+  [:702](../tb/tb_riscv_core.v#L702)) y 12 (la salida `hazard_stall` que
+  usa la GUI, [:731](../tb/tb_riscv_core.v#L731)).
+- **Hueco a saber:** ningún test del repositorio mira ciclo a ciclo el
+  caso del ejemplo 2 (`branch_taken = 1` durante un stall). Lo cubren el
+  chequeo unitario "stall y salto tomado a la vez" y el resultado final
+  de los programas.
+
+Preguntas: §B.17.
+
+---
+
+## 18. Parada 16 — `debug_unit` ([debug_unit.v](../rtl/debug/debug_unit.v))
+
+### 18.1 La cajita
+
+La que **manda** sobre el procesador desde afuera. Lee los comandos que
+llegan de la PC por la UART y, según el comando, carga la memoria de
+programa o la de datos, deja correr el núcleo (todo seguido o de a un
+ciclo), lo resetea o pide un volcado. Es una máquina de estados de 15
+estados ([debug_unit.v:91-106](../rtl/debug/debug_unit.v#L91-L106)), con
+el mismo patrón "comando + disparo" que `alu_link.v` de TP2
+([:5-9](../rtl/debug/debug_unit.v#L5-L9)).
+
+No toca el clock: maneja al núcleo con dos señales
+([:16-23](../rtl/debug/debug_unit.v#L16-L23)).
+
+- `core_stall` → `global_stall_i` del núcleo (`core_en = ~global_stall_i`,
+  §1.4). **Vale 1 por defecto**: el núcleo está congelado, salvo en
+  `RUN_EXEC` y en el único ciclo de `STEP_EXEC`.
+- `core_soft_reset` → reset del núcleo, durante toda una carga y con
+  `CMD_RESET`.
+
+Además maneja los puertos de carga de la imem y la dmem, y dispara a la
+`dump_unit`.
+
+### 18.2 Puertos
+
+```
+ uart_interface (Rx): r_data, rx_empty ──► ┐                ┌─► rd (ya leí el byte) ──────────► uart_interface
+ imem/dmem: clear_busy ──────────────────► │                ├─► imem_load_*, dmem_load_* ─────► riscv_core
+ riscv_core: core_halted (HALT en WB) ───► │   debug_unit   ├─► core_stall ─────► global_stall_i (core_en = ~stall)
+ dump_unit: dump_done ───────────────────► ┘                ├─► core_soft_reset ► OR con el reset físico ─► riscv_core
+                                                            └─► dump_trigger ───────────────────► dump_unit
+```
+
+| Puerto | Viene de / va a | Dónde se cablea |
+|---|---|---|
+| `r_data_i`, `rx_empty_i`, `rd_o` | ↔ `uart_interface` de TP2, lado Rx: el byte que llegó, "no hay nada", "ya lo leí" | [riscv_uart_top.v:209](../rtl/debug/riscv_uart_top.v#L209) |
+| `imem_load_*`, `dmem_load_*`, `*_clear_busy_i` | ↔ puertos de carga del núcleo (§6.2, §7.2) | [riscv_uart_top.v:210-215](../rtl/debug/riscv_uart_top.v#L210-L215), [:226-231](../rtl/debug/riscv_uart_top.v#L226-L231) |
+| `core_stall_o` | → `global_stall_i` del núcleo | [riscv_uart_top.v:216](../rtl/debug/riscv_uart_top.v#L216), [:225](../rtl/debug/riscv_uart_top.v#L225) |
+| `core_soft_reset_o` | → `core_rst = rst_sync \| core_soft_reset`, el reset del núcleo | [riscv_uart_top.v:164-166](../rtl/debug/riscv_uart_top.v#L164-L166) |
+| `core_halted_i` | ← `core_halted_o` del núcleo (HALT en WB) | [riscv_uart_top.v:217](../rtl/debug/riscv_uart_top.v#L217), [:233](../rtl/debug/riscv_uart_top.v#L233) |
+| `dump_trigger_o`, `dump_done_i` | ↔ `dump_unit` | [riscv_uart_top.v:218](../rtl/debug/riscv_uart_top.v#L218) |
+| `rst_i` | ← reset **físico** sincronizado, nunca el soft-reset (§B.1) | [riscv_uart_top.v:208](../rtl/debug/riscv_uart_top.v#L208) |
+
+### 18.3 Los comandos
+
+| Comando | Byte | Qué hace | ¿Responde? |
+|---|---|---|---|
+| `CMD_LOAD_PROG` | `0x10` | Soft-reset, borra la imem completa y carga N palabras | No |
+| `CMD_LOAD_DATA` | `0x11` | Lo mismo sobre la dmem | No |
+| `CMD_RUN` | `0x20` | Deja correr el núcleo hasta que el HALT llega a WB (o hasta una pausa) | Volcado |
+| `CMD_STEP` | `0x21` | Deja correr el núcleo **un ciclo** | Volcado |
+| `CMD_DUMP` | `0x22` | Sólo vuelca, sin avanzar | Volcado |
+| `CMD_RESET` | `0x23` | Un ciclo de soft-reset: PC, registros y latches; las memorias no | No |
+| `CMD_BREAK` | `0x24` | Pausa un `CMD_RUN` en curso (cualquier byte lo haría) | El volcado del RUN |
+| Cualquier otro | — | Se consume y se descarta | No |
+
+([debug_unit.v:82-89](../rtl/debug/debug_unit.v#L82-L89); formato
+completo en [debug_protocol.md](debug_protocol.md).) No hay eco ni
+confirmación: el volcado, o su ausencia, ya le dice a la PC qué pasó.
+
+### 18.4 Recorrido del código
+
+Dos bloques, como toda FSM del proyecto: un registro de estado
+([:132-151](../rtl/debug/debug_unit.v#L132-L151)), que se resetea sólo
+con el reset físico, y la lógica de próximo estado y salidas
+([:154-315](../rtl/debug/debug_unit.v#L154-L315)). Esta empieza con
+**todo apagado y `core_stall = 1`**
+([:156-172](../rtl/debug/debug_unit.v#L156-L172)): si un estado no dice
+nada, el núcleo está congelado. Es la misma idea de "arrancar en inerte"
+de `control_unit` (§10.3).
+
+| Estado | Qué hace | Núcleo | Sigue en |
+|---|---|---|---|
+| `RECV_CMD` | Si hay un byte, lo consume y decide ([:175-194](../rtl/debug/debug_unit.v#L175-L194)) | congelado | según el comando |
+| `LOAD_CLEAR` | Pide el borrado de la memoria destino ([:205-210](../rtl/debug/debug_unit.v#L205-L210)) | soft-reset | `LOAD_CLEAR_WAIT` |
+| `LOAD_CLEAR_WAIT` | Espera a que termine el barrido, ~1024 ciclos ([:212-215](../rtl/debug/debug_unit.v#L212-L215)) | soft-reset | `LOAD_SZ_LO` |
+| `LOAD_SZ_LO`, `LOAD_SZ_HI` | Recibe la cantidad de palabras N, 16 bits, byte bajo primero ([:217-231](../rtl/debug/debug_unit.v#L217-L231)) | soft-reset | `LOAD_B0`, o `RECV_CMD` si N = 0 (sólo borró) |
+| `LOAD_B0` … `LOAD_B3` | Arma una palabra con 4 bytes, little-endian ([:233-263](../rtl/debug/debug_unit.v#L233-L263)) | soft-reset | `LOAD_WRITE` |
+| `LOAD_WRITE` | La escribe en la dirección actual y suma 4 ([:265-275](../rtl/debug/debug_unit.v#L265-L275)) | soft-reset | `LOAD_B0`, o `RECV_CMD` si era la última |
+| `RUN_EXEC` | `core_stall = core_halted`: corre hasta el HALT en WB, o hasta que llega un byte ([:277-291](../rtl/debug/debug_unit.v#L277-L291)) | **corre** | `DUMP_TRIG` |
+| `STEP_EXEC` | `core_stall = core_halted` durante **un** ciclo ([:293-298](../rtl/debug/debug_unit.v#L293-L298)) | **1 ciclo** | `DUMP_TRIG` |
+| `DUMP_TRIG` | Pulso de un ciclo a la `dump_unit` ([:300-303](../rtl/debug/debug_unit.v#L300-L303)) | congelado | `DUMP_WAIT` |
+| `DUMP_WAIT` | Espera `dump_done` ([:305-307](../rtl/debug/debug_unit.v#L305-L307)) | congelado | `RECV_CMD` |
+| `RST_PULSE` | Un ciclo de soft-reset ([:309-311](../rtl/debug/debug_unit.v#L309-L311)) | soft-reset | `RECV_CMD` |
+
+Decisiones que vale la pena saber defender:
+
+- **Un solo juego de estados de carga para las dos memorias.** El
+  registro `load_target` (0 = imem, 1 = dmem), que se fija al leer el
+  comando, decide a qué puerto va cada escritura
+  ([:43-47](../rtl/debug/debug_unit.v#L43-L47),
+  [:179-186](../rtl/debug/debug_unit.v#L179-L186)). Así no hay 8 estados
+  duplicados.
+- **El núcleo congelado por defecto.** Lo que muestra un volcado es
+  exactamente el estado del ciclo en que el núcleo se detuvo, aunque
+  transmitirlo tarde ~108ms (unos 7 millones de ciclos a 65MHz). Por eso
+  la escritura de la dmem y la del banco también dependen de `core_en`
+  (§7.3, §8.2).
+- **`core_stall = core_halted` en RUN y STEP.** Con el HALT ya en WB, ni
+  RUN ni STEP hacen avanzar el núcleo: `CYCLE_COUNT` y el volcado quedan
+  fijos. Y RUN congela el núcleo en el mismo ciclo en que el HALT llega a
+  WB, sin dejarlo avanzar uno de más
+  ([:278-280](../rtl/debug/debug_unit.v#L278-L280)).
+- **La pausa acepta cualquier byte** ([:36-41](../rtl/debug/debug_unit.v#L36-L41),
+  [:284-290](../rtl/debug/debug_unit.v#L284-L290)). Es lo más simple:
+  durante RUN no hace falta decodificar nada. La PC manda `CMD_BREAK`
+  por convención: si llega tarde (el HALT ya llegó), cae en `RECV_CMD` y
+  se descarta como desconocido. Si el byte y el HALT coinciden, gana el
+  HALT.
+- **El soft-reset sale de un flip-flop**
+  ([:25-34](../rtl/debug/debug_unit.v#L25-L34),
+  [:116-126](../rtl/debug/debug_unit.v#L116-L126),
+  [:149](../rtl/debug/debug_unit.v#L149)). Es el reset asíncrono de todo
+  el núcleo, y una salida combinacional de la FSM puede tener glitches
+  cuando cambian los bits de estado. Un glitch en un reset asíncrono
+  resetea de verdad. Se calcula a partir de `state_next`, así que el
+  pulso cae exactamente en los ciclos de los estados de carga y de
+  `RST_PULSE`.
+
+### 18.5 Ejemplo (simulación de la Debug Unit, el núcleo y la Dump Unit reales)
+
+Una sesión como la de la GUI, simulada con `debug_unit`, `riscv_core` y
+`dump_unit` cableados como en `riscv_uart_top` (dmem de 256 palabras). La
+UART se reemplazó por una cola de bytes para que la simulación sea
+rápida; el camino con la UART real lo prueba `tb_riscv_uart_top.v`.
+Programa: `scripts/01_suma.asm`.
+
+| Paso | Bytes que manda la PC | Estados de la Debug Unit | Ciclos con el núcleo libre | Resultado |
+|---|---|---|---|---|
+| Cargar | `10 09 00` + 9 palabras (36 bytes; la primera, `93 00 50 00`) | `LOAD_CLEAR` → `LOAD_CLEAR_WAIT` (1025 ciclos) → `LOAD_SZ_LO/HI` → 9 × (`LOAD_B0..B3` → `LOAD_WRITE`) | 0 (soft-reset durante 1073 ciclos) | No responde |
+| `CMD_DUMP` | `22` | `DUMP_TRIG` → `DUMP_WAIT` | 0 | `CYCLE_COUNT = 0`; IF: PC 0, el primer `addi` |
+| `CMD_STEP` | `21` | `STEP_EXEC` → volcado | **1** | `CYCLE_COUNT = 1`; el `addi` pasó a IF/ID |
+| `CMD_RUN` | `20` | `RUN_EXEC` (32 ciclos) → volcado | 31 | `halted = 1`, `CYCLE_COUNT = 32`, `x2 = 15`, `dmem[0] = 15` |
+| `CMD_STEP` | `21` | `STEP_EXEC` → volcado | **0** (ya terminó) | Igual al anterior |
+| `CMD_RUN` | `20` | `RUN_EXEC` (1 ciclo) → volcado | **0** | Igual al anterior |
+| `CMD_RESET`, `CMD_DUMP` | `23`, `22` | `RST_PULSE` (1 ciclo de soft-reset) → … → volcado | 0 | `CYCLE_COUNT = 0`, registros en 0, **`dmem[0]` sigue en 15** |
+| Byte desconocido | `55` | Se queda en `RECV_CMD` | 0 | Nada |
+
+Y la pausa, con `scripts/07_loop_infinito.asm` (un loop sin HALT):
+
+| Paso | Bytes | Resultado |
+|---|---|---|
+| Cargar y `CMD_RUN` | … `20` | `RUN_EXEC` no termina solo |
+| `CMD_BREAK`, 300 ciclos después | `24` | Volcado con `halted = 0` (pausa), `CYCLE_COUNT = 300`, `x5 = 99` |
+| `CMD_STEP` | `21` | `CYCLE_COUNT = 301`: después de una pausa se puede seguir |
+
+- El `CMD_RUN` libera 31 ciclos porque el `CMD_STEP` anterior ya había
+  ejecutado uno: `CYCLE_COUNT = 32` es la duración real del programa, la
+  misma que dice `scripts/README.md`.
+- En la placa la carga la marca la UART: cada byte tarda ~87µs, así que
+  los 39 bytes de este programa llevan ~3,4ms. El borrado (~16µs a 65MHz)
+  termina antes de que llegue el segundo byte.
+
+### 18.6 Cómo se prueba
+
+- [tb_debug_unit.v](../tb/tb_debug_unit.v): 43 chequeos, manejando la
+  interfaz Rx directamente, sin el timing de la UART
+  ([:184-335](../tb/tb_debug_unit.v#L184-L335)). Cubre:
+  - `CMD_LOAD_PROG` y `CMD_LOAD_DATA` completos (borrado, palabras a la
+    memoria correcta, soft-reset sostenido) y N = 0;
+  - `CMD_RUN` hasta HALT "y ni un ciclo más", la pausa, y la pausa que
+    coincide con el HALT;
+  - `CMD_STEP` de exactamente un ciclo, y sobre un núcleo detenido;
+  - `CMD_DUMP`, `CMD_RESET` y un comando desconocido.
+- [tb_riscv_uart_top.v](../tb/tb_riscv_uart_top.v): 19 chequeos de punta
+  a punta, con la UART real bit a bit: carga, `CMD_RUN` con el volcado
+  completo, `CMD_STEP` sobre un núcleo detenido, loop infinito con
+  `CMD_BREAK`, y `CMD_STEP`/`CMD_RUN` después de la pausa
+  ([:201-276](../tb/tb_riscv_uart_top.v#L201-L276)).
+- [tb_riscv_core.v](../tb/tb_riscv_core.v), sección 10: el congelamiento
+  es una pausa perfecta (paso a paso = corrida libre, ciclo por ciclo).
+
+Preguntas: §B.18.
+
+---
+
+## 19. Parada 17 — `dump_unit` y `riscv_uart_top` ([dump_unit.v](../rtl/debug/dump_unit.v), [riscv_uart_top.v](../rtl/debug/riscv_uart_top.v))
+
+### 19.1 La cajita
+
+La `dump_unit` es la que **habla** hacia la PC. Cuando la Debug Unit la
+dispara, manda por la UART una foto completa del procesador: estado,
+contador de ciclos, los 4 latches, los 32 registros, la etapa IF y la
+dmem entera. Va palabra por palabra, cada una en 4 bytes little-endian
+(el byte menos significativo primero). No decide nada ni lee comandos:
+sólo serializa ([dump_unit.v:5-12](../rtl/debug/dump_unit.v#L5-L12)).
+
+Es lo que pide el enunciado para la Debug Unit: mandar a la PC el
+contenido de los 32 registros, el de los latches intermedios y el de la
+memoria de datos usada.
+
+### 19.2 Qué se manda
+
+| Palabras | Contenido |
+|---|---|
+| 0 | `SYNC = 0xAA55AA55`, para que la PC se resincronice si pierde un byte |
+| 1 | `STATUS`: bit 0 `halted`, bit 1 `branch_taken`, bit 2 `stalled`, bit 3 `hazard_stall`, bits 15:8 los selectores de forwarding |
+| 2 | `CYCLE_COUNT` |
+| 3-4 | IF/ID: `pc`, `instr` |
+| 5-10 | ID/EX: `pc`, `instr`, `rs1_data`, `rs2_data`, `imm`, `control` |
+| 11-15 | EX/MEM: `pc`, `instr`, `ex_result`, `rs2_data`, `control` |
+| 16-20 | MEM/WB: `pc`, `instr`, `result`, `mem_read_data`, `control` |
+| 21-52 | `x0` … `x31` |
+| 53-54 | Etapa IF: el PC actual y la instrucción que devuelve la imem |
+| 55-310 | `dmem[0]` … `dmem[255]` |
+
+En total, (55 + 256) × 4 = **1244 bytes, ~108ms a 115200 baudios**
+([debug_protocol.md](debug_protocol.md), "Volcado de estado").
+
+- **Siempre completo, nunca "sólo lo que cambió".** Un único formato
+  fijo: ni el hardware tiene que rastrear cambios ni la PC tiene que
+  entender dos tipos de paquete. El costo es tamaño; por eso la dmem del
+  top tiene 256 palabras y no 1024 (§7.1).
+- **"La memoria de datos usada".** Se manda la dmem completa, y la GUI
+  muestra por defecto "Solo la memoria usada": las palabras distintas de
+  0 o que cambiaron desde el volcado anterior
+  ([riscv_gui.py:314-316](../host/riscv_gui.py#L314-L316),
+  [:661-664](../host/riscv_gui.py#L661-L664)). Saber en hardware qué
+  direcciones se usaron pediría un registro de rango o un bit por
+  palabra; con 256 palabras, mandar todo cuesta ~108ms y simplifica.
+- **Los campos `control`** empaquetan en los bits bajos las señales de
+  control que lleva cada latch (`reg_write`, `mem_read`, …,
+  [dump_unit.v:138-139](../rtl/debug/dump_unit.v#L138-L139),
+  [:144-145](../rtl/debug/dump_unit.v#L144-L145),
+  [:150](../rtl/debug/dump_unit.v#L150)), y los selectores de forwarding
+  de STATUS ([:128-129](../rtl/debug/dump_unit.v#L128-L129)) permiten
+  que la GUI dibuje lo que decidió el hardware, en vez de recalcularlo.
+- **La etapa IF va al final** (53-54) y no antes de IF/ID porque se
+  agregó después: así no se movió ningún índice que ya existía
+  ([:183-186](../rtl/debug/dump_unit.v#L183-L186)).
+
+### 19.3 Recorrido del código (`dump_unit`)
+
+- **Qué palabra toca** ([:120-189](../rtl/debug/dump_unit.v#L120-L189)):
+  un mux que elige según `word_idx`. Del 55 en adelante, la palabra sale
+  del puerto de debug de la dmem, con la dirección
+  `(word_idx − 55) × 4` ([:191-198](../rtl/debug/dump_unit.v#L191-L198)).
+- **La FSM** ([:225-273](../rtl/debug/dump_unit.v#L225-L273)):
+  1. `IDLE`: espera el disparo.
+  2. `PREP_WORD`: captura la palabra en `current_word_reg`. Ocupa un
+     ciclo entero para que la dmem, del otro lado de un mux, ya responda
+     a la dirección nueva ([:20-29](../rtl/debug/dump_unit.v#L20-L29)).
+  3. `SEND_BYTE`: pone el byte y sostiene `wr` hasta ver `tx_full = 1`,
+     o sea, hasta que la UART lo aceptó.
+  4. `WAIT_SENT`: espera `tx_full = 0`, o sea, que se terminó de
+     transmitir. Sigue con el próximo byte, la próxima palabra
+     (`PREP_WORD`) o `DONE`.
+  5. `DONE`: avisa `dump_done` un ciclo y vuelve a `IDLE`.
+
+  Es el mismo handshake de dos pasos que `alu_link.v` de TP2
+  ([:14-18](../rtl/debug/dump_unit.v#L14-L18)).
+- Durante todo el volcado el núcleo está congelado (la Debug Unit espera
+  en `DUMP_WAIT`), así que las 311 palabras son del mismo ciclo.
+- **Dato de timing:** la captura del STATUS es el peor camino de todo el
+  diseño (14,98ns, §0), porque `branch_taken` sale del adelantamiento
+  EX → ID. En la práctica, cuando se captura, el núcleo está congelado y
+  el valor está quieto desde hace muchos ciclos; Vivado igual lo analiza
+  como un camino de un ciclo.
+
+### 19.4 `riscv_uart_top`: el cableado
+
+El top que simulan los testbenches.
+
+- **Resets** ([riscv_uart_top.v:16-33](../rtl/debug/riscv_uart_top.v#L16-L33)):
+  - El reset físico pasa por un sincronizador de 2 flip-flops: se activa
+    al instante y se libera alineado al clock
+    ([:75-81](../rtl/debug/riscv_uart_top.v#L75-L81)).
+  - Ese `rst_sync` resetea la UART, la `debug_unit` y la `dump_unit`
+    ([:208](../rtl/debug/riscv_uart_top.v#L208),
+    [:258](../rtl/debug/riscv_uart_top.v#L258)).
+  - El núcleo recibe `rst_sync | core_soft_reset`
+    ([:164-166](../rtl/debug/riscv_uart_top.v#L164-L166)). Las dos
+    señales salen de flip-flops.
+- **UART de TP2** ([:83-162](../rtl/debug/riscv_uart_top.v#L83-L162)):
+  generador de baudios, receptor, transmisor e interfaz, con la paridad
+  apagada explícitamente (8N1,
+  [:100-104](../rtl/debug/riscv_uart_top.v#L100-L104)).
+- **Las tres instancias** ([:207-282](../rtl/debug/riscv_uart_top.v#L207-L282)):
+  - la `debug_unit` usa el lado Rx de la interfaz;
+  - la `dump_unit`, el lado Tx;
+  - el núcleo les da a las dos todas sus señales de debug.
+- **Parámetros**: dmem de 256 palabras (§7.1) y `CLK_FREQ` (100MHz por
+  defecto, el de la placa; el top de la placa lo cambia a 65MHz)
+  ([:46-55](../rtl/debug/riscv_uart_top.v#L46-L55)).
+- **Salidas `panel_*`**: algunas señales internas, sólo para que el panel
+  las observe; los testbenches las dejan sin conectar
+  ([:35-39](../rtl/debug/riscv_uart_top.v#L35-L39),
+  [:284-294](../rtl/debug/riscv_uart_top.v#L284-L294)).
+
+### 19.5 `riscv_fpga_top`: lo que agrega la placa
+
+[riscv_fpga_top.v](../rtl/fpga/riscv_fpga_top.v) envuelve a
+`riscv_uart_top` con tres decisiones propias de la placa.
+
+1. **El clock: Clock Wizard a 65MHz**
+   ([:13-26](../rtl/fpga/riscv_fpga_top.v#L13-L26),
+   [:81-85](../rtl/fpga/riscv_fpga_top.v#L81-L85)). Dos cosas lo tienen
+   que acompañar:
+   - `CLK_FREQ` tiene que ser la frecuencia real: con ella el generador
+     de baudios calcula su divisor. Si no coinciden, la UART transmite a
+     otro baud rate y la PC no la entiende
+     ([:28-34](../rtl/fpga/riscv_fpga_top.v#L28-L34),
+     [:55-58](../rtl/fpga/riscv_fpga_top.v#L55-L58)).
+   - Mientras el MMCM no "engancha" (`locked = 0`), su salida no es
+     confiable: el diseño se mantiene en reset con `rst_i | ~locked`
+     ([:35-37](../rtl/fpga/riscv_fpga_top.v#L35-L37),
+     [:93](../rtl/fpga/riscv_fpga_top.v#L93)).
+2. **Baud rate fijo en 115200**
+   ([:39-47](../rtl/fpga/riscv_fpga_top.v#L39-L47),
+   [:87-95](../rtl/fpga/riscv_fpga_top.v#L87-L95)). En TP2 se elegía con
+   los switches; acá la UART es sólo el canal hacia la PC. Se carga
+   115200 en el preset 3 y el selector se ata a ese preset.
+3. **El panel** ([:109-128](../rtl/fpga/riscv_fpga_top.v#L109-L128)),
+   descrito en §1.2.
+
+Vive en `rtl/fpga/` porque instancia un IP de Vivado que Icarus no
+conoce: así los comandos de simulación de `rtl/debug/` siguen andando
+igual ([:49-52](../rtl/fpga/riscv_fpga_top.v#L49-L52)).
+
+### 19.6 Ejemplo (simulación del diseño real)
+
+El volcado que respondió el `CMD_RUN` de la sesión de §18.5
+(`scripts/01_suma.asm`):
+
+| Palabra | Bytes, en el orden en que salen | Valor | Qué es |
+|---|---|---|---|
+| 0 | `55 AA 55 AA` | `0xAA55AA55` | SYNC |
+| 1 | `05 00 00 00` | `0x00000005` | STATUS: `halted = 1` (bit 0) y `stalled = 1` (bit 2: el HALT en ID frena el PC); `hazard_stall = 0` |
+| 2 | `20 00 00 00` | 32 | `CYCLE_COUNT` |
+| 3-4 | | PC 32, `0x0000000B` | IF/ID retiene el `halt` |
+| 16-17, 20 | | PC 32, `halt`, `control = 0x4` | MEM/WB: el `halt` llegó a WB (bit 2 de `control` = `is_halt`) |
+| 22-25 | | 5, 15, 6, 1 | `x1` … `x4` |
+| 53 | | 36 | IF: el PC quedó en la dirección del HALT + 4 |
+| 55 | | 15 | `dmem[0]`: la suma |
+
+Total: 1244 bytes. El volcado de un `CMD_STEP` empieza igual, con
+STATUS `00 00 00 00` y `CYCLE_COUNT` `01 00 00 00`.
+
+### 19.7 Cómo se prueba
+
+- [tb_dump_unit.v](../tb/tb_dump_unit.v): 60 chequeos. Pone un valor
+  reconocible en cada entrada (registros, latches, IF, STATUS, ciclos y
+  una dmem chica), dispara un volcado, captura los bytes con un modelo
+  simple de `tx_full` y compara cada palabra contra el mapa de
+  `debug_protocol.md`, incluidos los campos `control` y los bits de
+  STATUS.
+- [tb_riscv_uart_top.v](../tb/tb_riscv_uart_top.v): el volcado completo
+  atravesando la UART real, bit a bit.
+- Del lado de la PC, `test_riscv_protocol.py` (24 tests) prueba el
+  armado de los paquetes y la decodificación del volcado, y
+  `test_riscv_client.py` la CLI completa con un puerto serie simulado.
+
+Preguntas: §B.19.
 
 ---
 
@@ -2492,7 +3145,7 @@ La CLI (`python riscv_client.py --port COM4 programa.asm`) y la GUI
 
 Ejemplo, ensamblado con `riscv_asm.py` y corrido sobre el RTL real en
 simulación (resultado: `x2 = 15`, `mem[0] = 15`, termina por HALT en 32
-ciclos):
+ciclos; es `scripts/01_suma.asm`):
 
 ```asm
 # En C:  for (i = 1; i <= 5; i++) suma += i;   mem[0] = suma;
@@ -2662,6 +3315,16 @@ dependencias a distancia 3: corrido contra la copia sin bypass, fallan
 varios chequeos. Si alguien lo rompiera, la regresión lo detectaría.
 → §8.5.
 
+**¿El bypass del banco es lo mismo que dice el Patterson?**
+Sí, la misma idea ("escribir en la primera mitad del ciclo y leer en la
+segunda"), implementada escribiendo en el flanco de subida más un mux de
+bypass, sin usar el flanco de bajada. → §8.3.
+
+**¿Por qué el banco no tiene `core_en`?**
+Lo tiene indirectamente: `reg_write_i` llega como
+`mem_wb_reg_write & core_en`. Con el core congelado no se escribe nada
+(ni se activa el bypass). → §8.2.
+
 ### B.9 `imm_gen` (parada 3)
 
 **¿Qué hace `imm_gen` y cómo sabe qué formato es?**
@@ -2764,7 +3427,7 @@ Se adelanta a ID la salida de EX del mismo ciclo. En el libro, un salto
 que depende de la instrucción de ALU inmediatamente anterior frena 1
 ciclo; acá no (simulado: 7 ciclos contra 8). Ahorra 12–17% de ciclos en
 loops, a cambio de poner la ALU y el comparador en serie: ese es el
-camino crítico, y por eso el clock baja a 50MHz. → §11.4, §11.5,
+camino crítico, y por eso el clock baja a 65MHz. → §11.4, §11.5,
 [informe §3.1](../informe.md).
 
 **¿Hay predicción de saltos?**
@@ -2862,6 +3525,69 @@ contador). → §13.3–§13.5.
 Sí, de forma estática y sin un circuito predictor: ver la pregunta "¿Hay
 predicción de saltos?" en §B.11.
 
+### B.14 `id_ex_reg` (parada 10)
+
+**¿Qué lleva ID/EX que no lleva IF/ID?**
+Los valores leídos del banco (`rs1_data`, `rs2_data`), el inmediato y
+las 10 señales de control que usan EX, MEM y WB. Las señales hay que
+guardarlas porque en EX no hay otro `control_unit`. → §14.1.
+
+**¿Por qué ID/EX no se congela en un stall, como IF/ID?**
+Porque en un stall la instrucción de ID espera pero las de adelante
+siguen. Si ID/EX se congelara, la instrucción de EX también entraría a
+EX/MEM y se ejecutaría dos veces. En el límite hace falta algo que no
+haga nada: la burbuja. ID/EX sólo se congela con `core_en = 0`. → §14.2.
+
+**¿Por qué la burbuja pone en 0 todas las señales y no sólo `instr`?**
+Porque `control_unit` sigue decodificando la instrucción que espera en
+ID: si sus señales pasaran, se ejecutaría a medias un ciclo antes.
+Simulado: con una burbuja incompleta, un `sw` que esperaba a un `lw`
+escribe con la base vieja en otra dirección y pisa un dato
+(`dmem[0]`: 8 → 0). → §14.3, §14.4.
+
+**¿Por qué ID/EX guarda los valores sin adelantar?**
+Porque el forwarding hacia EX, un ciclo después, tiene la información
+más actualizada y corrige lo que haga falta. Simulado: tras `lw x1`,
+el `add x2, x1, x1` entra a ID/EX con `rs1_data = 0` (viejo), y en EX
+usa 7 (adelantado desde MEM/WB). → §14.3, §14.4.
+
+**¿Hay algún caso que los tests de integración no cubran?**
+Sí: un store que espera a un load (burbuja con un store en ID). La
+burbuja incompleta no la detecta `tb_riscv_core.v`; la detecta el test
+unitario `tb_pipeline_regs.v`, que verifica que la burbuja pone todo en
+0. → §14.5.
+
+### B.15 `ex_mem_reg` y `mem_wb_reg` (parada 11)
+
+**¿Por qué EX/MEM y MEM/WB nunca se vacían?**
+Porque todos los descartes pasan antes de EX: el flush de un salto en
+IF/ID (los saltos se deciden en ID) y la burbuja de un stall en ID/EX.
+Una instrucción que llegó a EX es válida y tiene que terminar. Sólo se
+congelan con `core_en`. → §15.2.
+
+**¿Qué pasaría si los saltos se decidieran en MEM, como el datapath sin
+optimizar del libro?**
+Habría que vaciar también ID/EX y EX/MEM: cuando el salto llega a MEM,
+ya hay 3 instrucciones mal buscadas detrás (en IF, ID y EX). → §15.2,
+§11.4.
+
+**¿Por qué las señales de control "desaparecen" de latch en latch?**
+Porque cada una viaja sólo hasta la etapa que la usa: `alu_*` hasta EX,
+`mem_write` hasta MEM, `reg_write`/`mem_to_reg` hasta WB. ID/EX lleva
+10, EX/MEM 5 y MEM/WB 3. → §15.3.
+
+**¿Por qué MEM/WB lleva el resultado de la ALU y también el dato leído
+de memoria?**
+Porque recién en WB se elige cuál se escribe (`mem_to_reg`), como en el
+Patterson (mux *MemtoReg* en WB). Para un load, `result` tiene la
+dirección y se descarta; para el resto, `mem_read_data` se descarta.
+→ §15.3, §15.5.
+
+**¿Para qué llegan `pc` e `instr` hasta el final?**
+`instr` porque de ahí se sacan `rd` (para escribir en WB) y `funct3`
+(para la `dmem` en MEM). Los dos, además, para que la Debug Unit muestre
+qué instrucción hay en cada latch. → §15.3.
+
 ### B.16 `forwarding_unit` (parada 12)
 
 **¿Qué hace la `forwarding_unit`?**
@@ -2901,76 +3627,188 @@ que consume. → §16.1.
 La distancia 3: el productor ya salió de todos los latches. Lo cubre el
 bypass del banco de registros. → §16.3, §8.3.
 
-**¿Por qué EX/MEM y MEM/WB nunca se vacían?**
-Porque todos los descartes pasan antes de EX: el flush de un salto en
-IF/ID (los saltos se deciden en ID) y la burbuja de un stall en ID/EX.
-Una instrucción que llegó a EX es válida y tiene que terminar. Sólo se
-congelan con `core_en`. → §15.2.
+### B.17 `hazard_unit` (parada 13)
 
-**¿Qué pasaría si los saltos se decidieran en MEM, como el datapath sin
-optimizar del libro?**
-Habría que vaciar también ID/EX y EX/MEM: cuando el salto llega a MEM,
-ya hay 3 instrucciones mal buscadas detrás (en IF, ID y EX). → §15.2,
-§11.4.
+**¿Qué hace la `hazard_unit` y en qué se diferencia de la
+`forwarding_unit`?**
+La `forwarding_unit` adelanta un valor que ya existe en algún latch. La
+`hazard_unit` frena cuando el valor todavía no existe (el dato de un
+load), frena la búsqueda cuando hay un HALT en ID, y ordena el flush de
+un salto tomado. Ninguna de las dos mueve datos. → §17.1.
 
-**¿Por qué las señales de control "desaparecen" de latch en latch?**
-Porque cada una viaja sólo hasta la etapa que la usa: `alu_*` hasta EX,
-`mem_write` hasta MEM, `reg_write`/`mem_to_reg` hasta WB. ID/EX lleva
-10, EX/MEM 5 y MEM/WB 3. → §15.3.
+**¿Qué riesgos pide el enunciado y cómo resuelve cada uno el diseño?**
+Estructurales: no hay (imem y dmem separadas; el banco tiene 2 puertos
+de lectura y 1 de escritura). De datos: forwarding y, para un load,
+stall + burbuja. De control: el salto se resuelve en ID, se predice "no
+tomado" y, si se toma, flush (1 ciclo). → §17.1.
 
-**¿Por qué MEM/WB lleva el resultado de la ALU y también el dato leído
-de memoria?**
-Porque recién en WB se elige cuál se escribe (`mem_to_reg`), como en el
-Patterson (mux *MemtoReg* en WB). Para un load, `result` tiene la
-dirección y se descarta; para el resto, `mem_read_data` se descarta.
-→ §15.3, §15.5.
+**¿Por qué sólo los loads generan stall?**
+Cualquier otra instrucción tiene su resultado al final de EX y la
+`forwarding_unit` lo adelanta. El de un load recién existe al final de
+MEM. → §17.3.
 
-**¿Para qué llegan `pc` e `instr` hasta el final?**
-`instr` porque de ahí se sacan `rd` (para escribir en WB) y `funct3`
-(para la `dmem` en MEM). Los dos, además, para que la Debug Unit muestre
-qué instrucción hay en cada latch. → §15.3.
+**¿Por qué un salto después de un load frena 2 ciclos y un `add` sólo
+1?**
+Porque el salto se resuelve en ID: necesita el dato un ciclo antes que
+cualquier otra instrucción. Con el load en EX y después en MEM, el dato
+todavía no existe; recién con el load en WB se adelanta desde MEM/WB.
+Simulado: ciclos 8-10 del ejemplo 1. → §17.3, §17.4.
 
-### B.14 `id_ex_reg` (parada 10)
+**¿Por qué el chequeo "load en MEM" vale sólo para saltos?**
+Porque un consumidor común, con el load en MEM, al ciclo siguiente va a
+estar en EX con el load en WB, y ahí lo adelanta MEM/WB. En el ejemplo 1,
+ciclo 6, la señal vale 1 y el `add` igual sigue. → §17.4.
 
-**¿Qué lleva ID/EX que no lleva IF/ID?**
-Los valores leídos del banco (`rs1_data`, `rs2_data`), el inmediato y
-las 10 señales de control que usan EX, MEM y WB. Las señales hay que
-guardarlas porque en EX no hay otro `control_unit`. → §14.1.
+**¿Por qué el flush se condiciona a `~stall`?**
+Porque durante un stall el salto todavía no está decidido: el comparador
+puede estar viendo la dirección del load en vez del dato. Simulado:
+`branch_taken = 1` con 8 = 8 durante el stall, cuando en realidad
+7 ≠ 8. El stall congela PC e IF/ID y la decisión se repite cuando llega
+el dato. La prioridad del latch IF/ID protege el mismo caso, y además el
+congelamiento de la Debug Unit. → §17.3, §17.4 (ejemplo 2).
 
-**¿Por qué ID/EX no se congela en un stall, como IF/ID?**
-Porque en un stall la instrucción de ID espera pero las de adelante
-siguen. Si ID/EX se congelara, la instrucción de EX también entraría a
-EX/MEM y se ejecutaría dos veces. En el límite hace falta algo que no
-haga nada: la burbuja. ID/EX sólo se congela con `core_en = 0`. → §14.2.
+**¿Por qué el HALT congela PC e IF/ID pero no mete burbuja?**
+Porque el HALT tiene que llegar a WB para marcar que el pipeline quedó
+vacío. ID/EX sigue avanzando, y van pasando copias del halt. → §2.3,
+§17.3.
 
-**¿Por qué la burbuja pone en 0 todas las señales y no sólo `instr`?**
-Porque `control_unit` sigue decodificando la instrucción que espera en
-ID: si sus señales pasaran, se ejecutaría a medias un ciclo antes.
-Simulado: con una burbuja incompleta, un `sw` que esperaba a un `lw`
-escribe con la base vieja en otra dirección y pisa un dato
-(`dmem[0]`: 8 → 0). → §14.3, §14.4.
+**¿La `hazard_unit` sabe del congelamiento de la Debug Unit?**
+No. `core_en` se combina afuera (`pc_write_en · core_en`,
+`if_id_write_en · core_en`), y en los latches congelar le gana a vaciar
+y a burbujear. → §17.2, §12.4, §14.3.
 
-**¿Por qué ID/EX guarda los valores sin adelantar?**
-Porque el forwarding hacia EX, un ciclo después, tiene la información
-más actualizada y corrige lo que haga falta. Simulado: tras `lw x1`,
-el `add x2, x1, x1` entra a ID/EX con `rs1_data = 0` (viejo), y en EX
-usa 7 (adelantado desde MEM/WB). → §14.3, §14.4.
+**¿Qué diferencia hay entre `stalled` y `hazard_stall` en el STATUS?**
+`stalled` es "el PC no avanza por una decisión del pipeline": un stall de
+datos o un HALT en ID. `hazard_stall` es sólo el stall de datos (hay
+burbuja). `stalled` sin `hazard_stall` es un HALT en ID. Ninguno incluye
+el congelamiento de la Debug Unit. → §17.3.
 
-**¿Hay algún caso que los tests de integración no cubran?**
-Sí: un store que espera a un load (burbuja con un store en ID). La
-burbuja incompleta no la detecta `tb_riscv_core.v`; la detecta el test
-unitario `tb_pipeline_regs.v`, que verifica que la burbuja pone todo en
-0. → §14.5.
+### B.18 `debug_unit` (parada 16)
 
-**¿Es lo mismo que dice el Patterson?**
-Sí, la misma idea ("escribir en la primera mitad del ciclo y leer en la
-segunda"), implementada escribiendo en el flanco de subida más un mux de
-bypass, sin usar el flanco de bajada. → §8.3.
+**¿Cómo controla la Debug Unit al procesador sin tocar el clock?**
+Con dos señales. `core_stall` va a `global_stall_i`, que es el enable de
+todo lo que tiene estado en el núcleo (`core_en`). `core_soft_reset` va
+al reset del núcleo. El clock llega siempre a todos los flip-flops.
+→ §18.1, §1.4.
 
-**¿Por qué el banco no tiene `core_en`?**
-Lo tiene indirectamente: `reg_write_i` llega como
-`mem_wb_reg_write & core_en`. Con el core congelado no se escribe nada
-(ni se activa el bypass). → §8.2.
+**¿Por qué el núcleo está congelado por defecto?**
+Para que el volcado muestre exactamente el estado del ciclo en que el
+núcleo se detuvo, aunque transmitirlo tarde ~108ms (unos 7 millones de
+ciclos). Sólo `RUN_EXEC` y el único ciclo de `STEP_EXEC` lo liberan.
+→ §18.4.
+
+**¿Cómo garantiza `CMD_STEP` exactamente un ciclo?**
+`STEP_EXEC` dura un solo ciclo y es lo único que baja `core_stall`;
+después dispara el volcado. Simulado: 1 ciclo liberado, `CYCLE_COUNT`
+pasa de 0 a 1. → §18.4, §18.5.
+
+**¿Qué pasa con `CMD_RUN` o `CMD_STEP` si el programa ya terminó?**
+Nada: `core_stall = core_halted`, así que con el HALT en WB el núcleo no
+avanza y sólo se repite el mismo volcado, con el mismo `CYCLE_COUNT`.
+→ §18.5.
+
+**¿Qué pasa si el programa no termina nunca?**
+Durante `CMD_RUN` cualquier byte lo pausa. La PC manda `CMD_BREAK`, y el
+volcado sale con `halted = 0`. Después se puede seguir con `CMD_STEP` o
+con otro `CMD_RUN`. Simulado con `scripts/07_loop_infinito.asm`.
+→ §18.4, §18.5, §2.4.
+
+**Las cuatro preguntas del enunciado sobre reprogramar: ¿hay que vaciar
+la memoria? ¿los registros? ¿el pipeline? ¿la memoria de programa?**
+
+| | ¿Se vacía al cargar un programa? | Por qué |
+|---|---|---|
+| Memoria de datos | **No** (sólo con `CMD_LOAD_DATA`) | Como la RAM de una PC al reiniciar: los datos de entrada cargados con `CMD_LOAD_DATA` no se pierden al cargar el programa (`scripts/05_contador.asm` muestra que persisten entre corridas) |
+| Registros | **Sí** (soft-reset) | El programa nuevo no depende de lo que dejó el anterior |
+| Pipeline | **Sí** (soft-reset: los latches vuelven a NOP y el PC a 0) | No arrastrar instrucciones a medio ejecutar del programa viejo |
+| Memoria de programa | **Sí, completa** | Lo que sigue al programa nuevo es `0x00000000` = HALT implícito, no restos del anterior |
+
+Simulado: después de `CMD_RESET` los registros y `CYCLE_COUNT` vuelven a
+0, pero `dmem[0]` sigue en 15. → §6.4, §7.1, §8.3, §18.5,
+[informe §3.3](../informe.md).
+
+**¿Por qué la carga espera en `LOAD_CLEAR_WAIT`?**
+Porque el borrado tarda ~1024 ciclos (una dirección por ciclo, ~16µs a
+65MHz). Si se escribiera antes, el barrido pisaría lo escrito. En la
+placa casi nunca se nota: el byte siguiente tarda ~87µs en llegar.
+→ §6.3, §18.5.
+
+**¿Por qué el soft-reset sale de un flip-flop?**
+Porque es el reset asíncrono de todo el núcleo, y una salida
+combinacional de la FSM puede tener glitches cuando cambian los bits de
+estado. Un glitch en un reset asíncrono resetea de verdad. → §18.4, B.1.
+
+**¿Por qué un solo juego de estados para cargar la imem y la dmem?**
+El registro `load_target`, que se fija al leer el comando, decide a qué
+memoria va cada escritura. Evita duplicar 8 estados. → §18.4.
+
+**¿Qué pasa con un comando desconocido?**
+Se consume y se descarta, sin efecto. Simulado con el byte `0x55`.
+→ §18.5.
+
+**¿Por qué no hay eco ni confirmación de los comandos?**
+Porque el volcado, o su ausencia, ya le dice a la PC qué pasó: la carga y
+el reset no responden, y RUN, STEP y DUMP responden con un volcado.
+→ §18.3.
+
+### B.19 `dump_unit` y los tops (parada 17)
+
+**¿Qué manda el volcado y en qué orden?**
+Una palabra de sincronía, STATUS, `CYCLE_COUNT`, los 4 latches, los 32
+registros, la etapa IF y la dmem completa: 311 palabras, 1244 bytes,
+~108ms a 115200 baudios. → §19.2.
+
+**El enunciado pide "la memoria de datos usada". ¿Qué mandan?**
+La dmem completa (256 palabras); la GUI muestra por defecto sólo las
+palabras distintas de 0 o que cambiaron. Saber en hardware qué
+direcciones se usaron pediría más lógica, y con 256 palabras mandar todo
+cuesta ~108ms. → §19.2.
+
+**¿Por qué un volcado completo y no sólo lo que cambió?**
+Por simplicidad: un único formato fijo, sin rastrear cambios en el
+hardware ni entender dos tipos de paquete en la PC. El costo es el
+tamaño, y por eso la dmem del top tiene 256 palabras y no 1024.
+→ §19.2, §7.1.
+
+**¿Para qué la palabra `0xAA55AA55` al principio?**
+Para que la PC se pueda resincronizar si pierde un byte: marca dónde
+empieza un volcado. → §19.2.
+
+**¿Por qué hay un estado `PREP_WORD`?**
+Para darle un ciclo entero a la lectura de la dmem: la dirección sale de
+la `dump_unit`, atraviesa un mux y la memoria, y el dato vuelve. Recién
+después se captura la palabra. → §19.3.
+
+**¿Cómo sabe la `dump_unit` que la UART aceptó y transmitió un byte?**
+Con el handshake de dos pasos de TP2: sostiene `wr` hasta ver
+`tx_full = 1` (lo aceptó) y espera `tx_full = 0` (se transmitió) antes
+del siguiente. → §19.3.
+
+**¿Cómo se reparten la UART la `debug_unit` y la `dump_unit`?**
+No compiten: la `debug_unit` usa sólo el lado Rx y la `dump_unit` sólo el
+Tx. → §1.2, §19.4.
+
+**¿Por qué hay un top aparte para la placa (`riscv_fpga_top`)?**
+Porque instancia el Clock Wizard, un IP de Vivado que Icarus no puede
+simular. Ahí van además el baud rate fijo y el panel. Los testbenches
+siguen simulando `riscv_uart_top`. → §19.5.
+
+**¿Qué pasa si `CLK_FREQ` no coincide con lo que genera el Clock
+Wizard?**
+El generador de baudios calcula mal su divisor y la UART transmite a
+otro baud rate: la PC no la entiende. Por eso son dos cosas que hay que
+cambiar juntas. → §19.5.
+
+**¿Por qué el reset es `rst_i | ~locked`?**
+Porque hasta que el MMCM no se engancha, su salida no es un clock
+confiable. El diseño queda en reset hasta entonces, y el sincronizador
+lo libera alineado al clock nuevo. → §19.5.
+
+**¿Qué muestra el panel de la placa?**
+En el display, qué está haciendo la placa (`LoAd`, `rUn`, `HALt` con los
+ciclos, `StOP`, o `CYCLE_COUNT` en paso a paso). En los LEDs, los riesgos
+del ciclo: HALT, stall, salto tomado y las flechas de forwarding. Sólo
+observa: ninguna de sus salidas vuelve al núcleo. → §1.2.
 
 ---
 
@@ -2994,3 +3832,20 @@ Lo tiene indirectamente: `reg_write_i` llega como
   el clock).
 - **Soft-reset:** reset del core que genera la `debug_unit` durante la
   carga de un programa o con `CMD_RESET`.
+- **Stall, burbuja, flush:** frenar PC e IF/ID; meter un NOP en ID/EX
+  mientras la instrucción de ID espera; descartar la instrucción de
+  IF/ID después de un salto tomado (§13.1, §17).
+- **Volcado (dump):** la foto completa del procesador que la `dump_unit`
+  manda a la PC después de cada `CMD_RUN`, `CMD_STEP` o `CMD_DUMP`
+  (§19.2).
+- **LUTRAM (RAM distribuida):** memoria armada con las LUTs de la FPGA,
+  de lectura asíncrona. La alternativa es la Block RAM, de lectura
+  síncrona (§6.3).
+- **Clock Wizard / MMCM:** el IP de Vivado que configura un MMCM, el
+  bloque de la FPGA que genera un clock de otra frecuencia a partir del
+  oscilador. Acá, 65MHz a partir de 100MHz (§0).
+- **Slack / WNS:** el slack es el margen de tiempo que le sobra a un
+  camino hasta el próximo flanco; el WNS es el peor slack del diseño. Si
+  es positivo, el diseño cierra timing.
+- **Skew:** diferencia entre lo que tarda el clock en llegar al
+  flip-flop de origen y al de destino de un camino.
