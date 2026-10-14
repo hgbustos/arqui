@@ -1,0 +1,328 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1660" viewBox="0 0 1600 1660" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" xml:space="preserve">
+<title>Debug Unit del TP3: máquina de estados, volcado y diagramas temporales (debug_unit.v, dump_unit.v)</title>
+<defs>
+<marker id="m2d333b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto"><path d="M0,1 L9,5 L0,9 z" fill="#2d333b"/></marker>
+<marker id="ma66a00" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto"><path d="M0,1 L9,5 L0,9 z" fill="#a66a00"/></marker>
+<marker id="m15803d" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto"><path d="M0,1 L9,5 L0,9 z" fill="#15803d"/></marker>
+<marker id="md1293d" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto"><path d="M0,1 L9,5 L0,9 z" fill="#d1293d"/></marker>
+<marker id="m6b7280" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto"><path d="M0,1 L9,5 L0,9 z" fill="#6b7280"/></marker>
+<marker id="mc2410c" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto"><path d="M0,1 L9,5 L0,9 z" fill="#c2410c"/></marker>
+</defs>
+<rect x="0" y="0" width="1600" height="1660" rx="0" fill="#ffffff"/>
+<text x="24" y="38" font-size="24" fill="#2d333b" text-anchor="start" font-weight="700">DEBUG UNIT (TP3) — MÁQUINA DE ESTADOS Y VOLCADO</text>
+<text x="24" y="62" font-size="13" fill="#6b7280" text-anchor="start">debug_unit.v + dump_unit.v · estados y transiciones del RTL · el color de cada estado dice qué le pasa al núcleo mientras la FSM está ahí · el clock nunca se toca: se congela con un enable (core_en)</text>
+<rect x="16" y="80" width="1124" height="740" rx="0" fill="#f1f3f6"/>
+<text x="32" y="106" font-size="15" fill="#2d333b" text-anchor="start" font-weight="700">A · debug_unit.v — recibe comandos (lado Rx de la UART)</text>
+<text x="476" y="106" font-size="12" fill="#6b7280" text-anchor="start">(:n = línea de debug_unit.v)</text>
+<rect x="470" y="170" width="300" height="60" rx="10" fill="#e8ecf2" stroke="#4b5563" stroke-width="2.6"/>
+<text x="620.0" y="191" font-size="14" fill="#2d333b" text-anchor="middle" font-weight="700" font-family="Consolas, 'DejaVu Sans Mono', 'Courier New', monospace">RECV_CMD</text>
+<text x="620.0" y="208" font-size="11" fill="#374151" text-anchor="middle">lee un byte y decide (:175-194)</text>
+<path d="M590,170 C590,132 650,132 650,168" fill="none" stroke="#2d333b" stroke-width="1.5" marker-end="url(#m2d333b)"/>
+<text x="620" y="128" font-size="11" fill="#374151" text-anchor="middle">sin byte, o byte desconocido (también 0x24): se descarta</text>
+<rect x="28" y="128" width="300" height="590" rx="12" fill="#fff7ef" stroke="#c2410c" stroke-width="1.2" stroke-dasharray="6 4"/>
+<text x="42" y="148" font-size="12.5" fill="#c2410c" text-anchor="start" font-weight="700">CARGA · CMD_LOAD_PROG / CMD_LOAD_DATA</text>
+<text x="42" y="164" font-size="11" fill="#c2410c" text-anchor="start">núcleo en soft-reset durante toda la carga</text>
+<rect x="70" y="178" width="240" height="44" rx="10" fill="#fde9d6" stroke="#c2410c" stroke-width="1.6"/>
+<text x="190.0" y="199" font-size="14" fill="#2d333b" text-anchor="middle" font-weight="700" font-family="Consolas, 'DejaVu Sans Mono', 'Courier New', monospace">LOAD_CLEAR</text>
+<text x="190.0" y="216" font-size="11" fill="#374151" text-anchor="middle">borra imem (0x10) o dmem (0x11)</text>
+<rect x="70" y="258" width="240" height="44" rx="10" fill="#fde9d6" stroke="#c2410c" stroke-width="1.6"/>
+<text x="190.0" y="279" font-size="14" fill="#2d333b" text-anchor="middle" font-weight="700" font-family="Consolas, 'DejaVu Sans Mono', 'Courier New', monospace">LOAD_CLEAR_WAIT</text>
+<text x="190.0" y="296" font-size="11" fill="#374151" text-anchor="middle">espera fin del borrado (:212)</text>
+<rect x="70" y="338" width="240" height="44" rx="10" fill="#fde9d6" stroke="#c2410c" stroke-width="1.6"/>
+<text x="190.0" y="359" font-size="14" fill="#2d333b" text-anchor="middle" font-weight="700" font-family="Consolas, 'DejaVu Sans Mono', 'Courier New', monospace">LOAD_SZ_LO</text>
+<text x="190.0" y="376" font-size="11" fill="#374151" text-anchor="middle">N palabras: byte bajo</text>
+<rect x="70" y="418" width="240" height="44" rx="10" fill="#fde9d6" stroke="#c2410c" stroke-width="1.6"/>
+<text x="190.0" y="439" font-size="14" fill="#2d333b" text-anchor="middle" font-weight="700" font-family="Consolas, 'DejaVu Sans Mono', 'Courier New', monospace">LOAD_SZ_HI</text>
+<text x="190.0" y="456" font-size="11" fill="#374151" text-anchor="middle">N palabras: byte alto</text>
+<rect x="70" y="510" width="51" height="40" rx="10" fill="#fde9d6" stroke="#c2410c" stroke-width="1.6"/>
+<text x="95.5" y="535.0" font-size="13" fill="#2d333b" text-anchor="middle" font-weight="700" font-family="Consolas, 'DejaVu Sans Mono', 'Courier New', monospace">B0</text>
+<path d="M121,530 L133,530" fill="none" stroke="#2d333b" stroke-width="1.3" marker-end="url(#m2d333b)"/>
+<rect x="133" y="510" width="51" height="40" rx="10" fill="#fde9d6" stroke="#c2410c" stroke-width="1.6"/>
+<text x="158.5" y="535.0" font-size="13" fill="#2d333b" text-anchor="middle" font-weight="700" font-family="Consolas, 'DejaVu Sans Mono', 'Courier New', monospace">B1</text>
+<path d="M184,530 L196,530" fill="none" stroke="#2d333b" stroke-width="1.3" marker-end="url(#m2d333b)"/>
+<rect x="196" y="510" width="51" height="40" rx="10" fill="#fde9d6" stroke="#c2410c" stroke-width="1.6"/>
+<text x="221.5" y="535.0" font-size="13" fill="#2d333b" text-anchor="middle" font-weight="700" font-family="Consolas, 'DejaVu Sans Mono', 'Courier New', monospace">B2</text>
+<path d="M247,530 L259,530" fill="none" stroke="#2d333b" stroke-width="1.3" marker-end="url(#m2d333b)"/>
+<rect x="259" y="510" width="51" height="40" rx="10" fill="#fde9d6" stroke="#c2410c" stroke-width="1.6"/>
+<text x="284.5" y="535.0" font-size="13" fill="#2d333b" text-anchor="middle" font-weight="700" font-family="Consolas, 'DejaVu Sans Mono', 'Courier New', monospace">B3</text>
+<rect x="70" y="590" width="240" height="44" rx="10" fill="#fde9d6" stroke="#c2410c" stroke-width="1.6"/>
+<text x="190.0" y="611" font-size="14" fill="#2d333b" text-anchor="middle" font-weight="700" font-family="Consolas, 'DejaVu Sans Mono', 'Courier New', monospace">LOAD_WRITE</text>
+<text x="190.0" y="628" font-size="11" fill="#374151" text-anchor="middle">escribe la palabra · dir += 4</text>
+<path d="M190.0,222 L190.0,258" fill="none" stroke="#2d333b" stroke-width="1.5" marker-end="url(#m2d333b)"/>
+<path d="M190.0,302 L190.0,338" fill="none" stroke="#2d333b" stroke-width="1.5" marker-end="url(#m2d333b)"/>
+<text x="198.0" y="324" font-size="10.5" fill="#374151" text-anchor="start" font-family="Consolas, 'DejaVu Sans Mono', 'Courier New', monospace">clear_busy = 0</text>
+<path d="M190.0,382 L190.0,418" fill="none" stroke="#2d333b" stroke-width="1.5" marker-end="url(#m2d333b)"/>
+<path d="M95.5,462 L95.5,510" fill="none" stroke="#2d333b" stroke-width="1.5" marker-end="url(#m2d333b)"/>
+<text x="104" y="482" font-size="10.5" fill="#374151" text-anchor="start" font-family="Consolas, 'DejaVu Sans Mono', 'Courier New', monospace">N ≠ 0</text>
+<text x="104" y="503" font-size="11" fill="#374151" text-anchor="start">LOAD_B0 … B3 · 1 byte c/u</text>
+<path d="M284.5,550 L284.5,590" fill="none" stroke="#2d333b" stroke-width="1.5" marker-end="url(#m2d333b)"/>
+<path d="M70,612 L50,612 L50,530 L70,530" fill="none" stroke="#2d333b" stroke-width="1.5" marker-end="url(#m2d333b)"/>
+<text x="44" y="571" font-size="10.5" fill="#374151" text-anchor="middle" transform="rotate(-90 44 571)">quedan más</text>
+<path d="M310,612 L350,612 L350,222 L470,222" fill="none" stroke="#2d333b" stroke-width="1.5" marker-end="url(#m2d333b)"/>
+<path d="M310,440 L350,440" fill="none" stroke="#2d333b" stroke-width="1.5"/>
+<circle cx="350" cy="440" r="3.2" fill="#2d333b"/>
+<text x="357" y="444" font-size="10.5" fill="#374151" text-anchor="start" font-family="Consolas, 'DejaVu Sans Mono', 'Courier New', monospace">N = 0</text>
+<text x="357" y="626" font-size="10.5" fill="#374151" text-anchor="start">última</text>
+<text x="364" y="505" font-size="10.5" fill="#6b7280" text-anchor="middle" transform="rotate(90 364 505)">vuelve a RECV_CMD</text>
+<text x="42" y="684" font-size="11" fill="#374151" text-anchor="start">Cada estado de recepción espera mientras no</text>
+<text x="42" y="700" font-size="11" fill="#374151" text-anchor="start">llegue un byte (rx_empty = 1); al llegar, rd_o = 1.</text>
+<path d="M470,190 L310,190" fill="none" stroke="#2d333b" stroke-width="1.5" marker-end="url(#m2d333b)"/>
+<text x="390" y="183" font-size="12" fill="#0e7f86" text-anchor="middle" font-weight="700" font-family="Consolas, 'DejaVu Sans Mono', 'Courier New', monospace">0x10 / 0x11</text>
+<rect x="380" y="330" width="200" height="64" rx="10" fill="#dcf5e3" stroke="#15803d" stroke-width="1.6"/>
+<text x="480.0" y="351" font-size="14" fill="#2d333b" text-anchor="middle" font-weight="700" font-family="Consolas, 'DejaVu Sans Mono', 'Courier New', monospace">STEP_EXEC</text>
+<text x="480.0" y="368" font-size="11" fill="#374151" text-anchor="middle">core_stall = core_halted (:296)</text>
+<text x="480.0" y="382" font-size="11" fill="#374151" text-anchor="middle">libera exactamente 1 ciclo</text>
+<rect x="680" y="330" width="220" height="64" rx="10" fill="#dcf5e3" stroke="#15803d" stroke-width="1.6"/>
+<text x="790.0" y="351" font-size="14" fill="#2d333b" text-anchor="middle" font-weight="700" font-family="Consolas, 'DejaVu Sans Mono', 'Courier New', monospace">RUN_EXEC</text>
+<text x="790.0" y="368" font-size="11" fill="#374151" text-anchor="middle">core_stall = core_halted (:280)</text>
+<text x="790.0" y="382" font-size="11" fill="#374151" text-anchor="middle">corre ciclo tras ciclo</text>
+<rect x="520" y="520" width="200" height="60" rx="10" fill="#e8ecf2" stroke="#4b5563" stroke-width="1.6"/>
+<text x="620.0" y="541" font-size="14" fill="#2d333b" text-anchor="middle" font-weight="700" font-family="Consolas, 'DejaVu Sans Mono', 'Courier New', monospace">DUMP_TRIG</text>
+<text x="620.0" y="558" font-size="11" fill="#374151" text-anchor="middle">dump_trigger = 1 (:301)</text>
+<rect x="520" y="660" width="200" height="60" rx="10" fill="#e8ecf2" stroke="#4b5563" stroke-width="1.6"/>
+<text x="620.0" y="681" font-size="14" fill="#2d333b" text-anchor="middle" font-weight="700" font-family="Consolas, 'DejaVu Sans Mono', 'Courier New', monospace">DUMP_WAIT</text>
+<text x="620.0" y="698" font-size="11" fill="#374151" text-anchor="middle">espera dump_done (:305)</text>
+<rect x="900" y="170" width="170" height="60" rx="10" fill="#fde9d6" stroke="#c2410c" stroke-width="1.6"/>
+<text x="985.0" y="191" font-size="14" fill="#2d333b" text-anchor="middle" font-weight="700" font-family="Consolas, 'DejaVu Sans Mono', 'Courier New', monospace">RST_PULSE</text>
+<text x="985.0" y="208" font-size="11" fill="#374151" text-anchor="middle">1 ciclo de soft-reset (:309)</text>
+<path d="M540,230 L480,330" fill="none" stroke="#2d333b" stroke-width="1.5" marker-end="url(#m2d333b)"/>
+<text x="500" y="276" font-size="12" fill="#0e7f86" text-anchor="end" font-weight="700" font-family="Consolas, 'DejaVu Sans Mono', 'Courier New', monospace">0x21 STEP</text>
+<path d="M620,230 L620,520" fill="none" stroke="#2d333b" stroke-width="1.5" marker-end="url(#m2d333b)"/>
+<text x="628" y="300" font-size="12" fill="#0e7f86" text-anchor="start" font-weight="700" font-family="Consolas, 'DejaVu Sans Mono', 'Courier New', monospace">0x22 DUMP</text>
+<path d="M700,230 L790,330" fill="none" stroke="#2d333b" stroke-width="1.5" marker-end="url(#m2d333b)"/>
+<text x="754" y="272" font-size="12" fill="#0e7f86" text-anchor="start" font-weight="700" font-family="Consolas, 'DejaVu Sans Mono', 'Courier New', monospace">0x20 RUN</text>
+<path d="M770,200 L900,200" fill="none" stroke="#2d333b" stroke-width="1.5" marker-end="url(#m2d333b)"/>
+<text x="835" y="193" font-size="12" fill="#0e7f86" text-anchor="middle" font-weight="700" font-family="Consolas, 'DejaVu Sans Mono', 'Courier New', monospace">0x23 RESET</text>
+<path d="M900,350 C950,350 950,378 902,378" fill="none" stroke="#2d333b" stroke-width="1.5" marker-end="url(#m2d333b)"/>
+<text x="956" y="360" font-size="11" fill="#374151" text-anchor="start">ni HALT ni byte:</text>
+<text x="956" y="375" font-size="11" fill="#374151" text-anchor="start">sigue corriendo</text>
+<path d="M790,394 L702,520" fill="none" stroke="#2d333b" stroke-width="1.5" marker-end="url(#m2d333b)"/>
+<text x="770" y="444" font-size="11.5" fill="#d1293d" text-anchor="start" font-weight="700" font-family="Consolas, 'DejaVu Sans Mono', 'Courier New', monospace">core_halted = 1 (HALT en WB)</text>
+<text x="770" y="460" font-size="11" fill="#374151" text-anchor="start">o llegó un byte: pausa (rd_o = 1)</text>
+<text x="770" y="475" font-size="10.5" fill="#6b7280" text-anchor="start" font-style="italic">ciclo a ciclo: panel C</text>
+<path d="M480,394 L540,520" fill="none" stroke="#2d333b" stroke-width="1.5" marker-end="url(#m2d333b)"/>
+<text x="498" y="462" font-size="11" fill="#374151" text-anchor="end">siempre</text>
+<text x="498" y="477" font-size="10.5" fill="#6b7280" text-anchor="end" font-style="italic">ciclo a ciclo: panel D</text>
+<path d="M620,580 L620,660" fill="none" stroke="#2d333b" stroke-width="1.5" marker-end="url(#m2d333b)"/>
+<text x="628" y="624" font-size="11" fill="#374151" text-anchor="start">siempre</text>
+<rect x="740" y="543" width="130.0" height="19" rx="9.5" fill="#ffffff" stroke="#a66a00" stroke-width="1.3"/>
+<text x="805.0" y="557" font-size="11.5" fill="#a66a00" text-anchor="middle" font-weight="700" font-family="Consolas, 'DejaVu Sans Mono', 'Courier New', monospace">dump_trigger → B</text>
+<path d="M720,552 L738,552" fill="none" stroke="#a66a00" stroke-width="1.3" marker-end="url(#ma66a00)"/>
+<path d="M520,676 C470,676 470,704 518,704" fill="none" stroke="#2d333b" stroke-width="1.5" marker-end="url(#m2d333b)"/>
+<text x="464" y="686" font-size="11" fill="#374151" text-anchor="end" font-family="Consolas, 'DejaVu Sans Mono', 'Courier New', monospace">dump_done = 0</text>
+<text x="464" y="701" font-size="11" fill="#374151" text-anchor="end">(mandando bytes)</text>
+<path d="M720,700 L1110,700 L1110,250 L760,250 L760,232" fill="none" stroke="#2d333b" stroke-width="1.5" marker-end="url(#m2d333b)"/>
+<path d="M985,230 L985,250" fill="none" stroke="#2d333b" stroke-width="1.5"/>
+<circle cx="985" cy="250" r="3.2" fill="#2d333b"/>
+<text x="1000" y="244" font-size="10.5" fill="#374151" text-anchor="start">siempre</text>
+<text x="915" y="692" font-size="11.5" fill="#a66a00" text-anchor="middle" font-weight="700" font-family="Consolas, 'DejaVu Sans Mono', 'Courier New', monospace">dump_done = 1 (viene de B)</text>
+<text x="1124" y="475" font-size="10.5" fill="#6b7280" text-anchor="middle" transform="rotate(90 1124 475)">vuelve a RECV_CMD</text>
+<rect x="32" y="746" width="26" height="16" rx="4" fill="#e8ecf2" stroke="#4b5563" stroke-width="1.4"/>
+<text x="66" y="759" font-size="11.5" fill="#374151" text-anchor="start">núcleo congelado: core_stall = 1 (default de todo estado, :171)</text>
+<rect x="470" y="746" width="26" height="16" rx="4" fill="#dcf5e3" stroke="#15803d" stroke-width="1.4"/>
+<text x="504" y="759" font-size="11.5" fill="#374151" text-anchor="start">núcleo libre: core_stall = core_halted</text>
+<rect x="760" y="746" width="26" height="16" rx="4" fill="#fde9d6" stroke="#c2410c" stroke-width="1.4"/>
+<text x="794" y="759" font-size="11.5" fill="#374151" text-anchor="start">núcleo en soft-reset (sale de un flip-flop, :149)</text>
+<text x="32" y="790" font-size="11.5" fill="#374151" text-anchor="start">flecha = transición (state_next) · 0xNN = byte de comando · en RUN y STEP, si el programa ya terminó (core_halted = 1) el núcleo no avanza: sólo vuelca.</text>
+<rect x="1156" y="80" width="428" height="740" rx="0" fill="#f1f3f6"/>
+<text x="1172" y="106" font-size="15" fill="#2d333b" text-anchor="start" font-weight="700">B · dump_unit.v — manda el volcado (lado Tx)</text>
+<text x="1172" y="124" font-size="12" fill="#6b7280" text-anchor="start">(:n = línea de dump_unit.v)</text>
+<rect x="1240" y="160" width="190" height="52" rx="10" fill="#ffffff" stroke="#4b5563" stroke-width="1.6"/>
+<text x="1335.0" y="181" font-size="14" fill="#2d333b" text-anchor="middle" font-weight="700" font-family="Consolas, 'DejaVu Sans Mono', 'Courier New', monospace">IDLE</text>
+<text x="1335.0" y="198" font-size="11" fill="#374151" text-anchor="middle">espera el pulso (:226)</text>
+<rect x="1240" y="270" width="190" height="52" rx="10" fill="#ffffff" stroke="#4b5563" stroke-width="1.6"/>
+<text x="1335.0" y="291" font-size="14" fill="#2d333b" text-anchor="middle" font-weight="700" font-family="Consolas, 'DejaVu Sans Mono', 'Courier New', monospace">PREP_WORD</text>
+<text x="1335.0" y="308" font-size="11" fill="#374151" text-anchor="middle">arma el word (:235)</text>
+<rect x="1240" y="380" width="190" height="52" rx="10" fill="#ffffff" stroke="#4b5563" stroke-width="1.6"/>
+<text x="1335.0" y="401" font-size="14" fill="#2d333b" text-anchor="middle" font-weight="700" font-family="Consolas, 'DejaVu Sans Mono', 'Courier New', monospace">SEND_BYTE</text>
+<text x="1335.0" y="418" font-size="11" fill="#374151" text-anchor="middle">wr_o = 1 hasta tx_full (:241)</text>
+<rect x="1240" y="490" width="190" height="52" rx="10" fill="#ffffff" stroke="#4b5563" stroke-width="1.6"/>
+<text x="1335.0" y="511" font-size="14" fill="#2d333b" text-anchor="middle" font-weight="700" font-family="Consolas, 'DejaVu Sans Mono', 'Courier New', monospace">WAIT_SENT</text>
+<text x="1335.0" y="528" font-size="11" fill="#374151" text-anchor="middle">espera tx_full = 0 (:249)</text>
+<rect x="1240" y="600" width="190" height="52" rx="10" fill="#ffffff" stroke="#4b5563" stroke-width="1.6"/>
+<text x="1335.0" y="621" font-size="14" fill="#2d333b" text-anchor="middle" font-weight="700" font-family="Consolas, 'DejaVu Sans Mono', 'Courier New', monospace">DONE</text>
+<text x="1335.0" y="638" font-size="11" fill="#374151" text-anchor="middle">dump_done = 1 (:267)</text>
+<path d="M1335.0,212 L1335.0,270" fill="none" stroke="#2d333b" stroke-width="1.5" marker-end="url(#m2d333b)"/>
+<text x="1343.0" y="245.0" font-size="11" fill="#a66a00" text-anchor="start" font-weight="700" font-family="Consolas, 'DejaVu Sans Mono', 'Courier New', monospace">dump_trigger = 1 (de A)</text>
+<path d="M1335.0,322 L1335.0,380" fill="none" stroke="#2d333b" stroke-width="1.5" marker-end="url(#m2d333b)"/>
+<text x="1343.0" y="355.0" font-size="11" fill="#374151" text-anchor="start">siempre · byte 0 del word</text>
+<path d="M1335.0,432 L1335.0,490" fill="none" stroke="#2d333b" stroke-width="1.5" marker-end="url(#m2d333b)"/>
+<text x="1343.0" y="465.0" font-size="11" fill="#374151" text-anchor="start">tx_full = 1</text>
+<text x="1343.0" y="479.0" font-size="11" fill="#374151" text-anchor="start">(la UART lo tomó)</text>
+<path d="M1335.0,542 L1335.0,600" fill="none" stroke="#2d333b" stroke-width="1.5" marker-end="url(#m2d333b)"/>
+<text x="1343.0" y="575.0" font-size="11" fill="#374151" text-anchor="start">último byte del último word</text>
+<path d="M1430,510 L1472,510 L1472,406 L1432,406" fill="none" stroke="#2d333b" stroke-width="1.5" marker-end="url(#m2d333b)"/>
+<text x="1480" y="452" font-size="10.5" fill="#374151" text-anchor="start">quedan</text>
+<text x="1480" y="466" font-size="10.5" fill="#374151" text-anchor="start">bytes del</text>
+<text x="1480" y="480" font-size="10.5" fill="#374151" text-anchor="start">word</text>
+<path d="M1240,524 L1200,524 L1200,296 L1238,296" fill="none" stroke="#2d333b" stroke-width="1.5" marker-end="url(#m2d333b)"/>
+<text x="1190" y="425" font-size="10.5" fill="#374151" text-anchor="middle" transform="rotate(-90 1190 425)">word listo, quedan más</text>
+<path d="M1430,626 L1548,626 L1548,186 L1432,186" fill="none" stroke="#2d333b" stroke-width="1.5" marker-end="url(#m2d333b)"/>
+<text x="1562" y="400" font-size="10.5" fill="#374151" text-anchor="middle" transform="rotate(90 1562 400)">siempre (1 ciclo) → IDLE</text>
+<text x="1335.0" y="678" font-size="11.5" fill="#a66a00" text-anchor="middle" font-weight="700" font-family="Consolas, 'DejaVu Sans Mono', 'Courier New', monospace">dump_done = 1 → A sale de DUMP_WAIT</text>
+<text x="1172" y="712" font-size="11" fill="#374151" text-anchor="start">Manda 4 × (55 + 256) = 1244 bytes: SYNC, STATUS,</text>
+<text x="1172" y="727" font-size="11" fill="#374151" text-anchor="start">CYCLE_COUNT, los 4 latches, los 32 registros, PC e</text>
+<text x="1172" y="742" font-size="11" fill="#374151" text-anchor="start">instrucción de IF y la dmem entera.</text>
+<text x="1172" y="763" font-size="11" fill="#374151" text-anchor="start">SEND_BYTE / WAIT_SENT es el patrón de alu_link.v (TP2),</text>
+<text x="1172" y="778" font-size="11" fill="#374151" text-anchor="start">ahora en un loop. En la placa tarda ~108 ms: todo ese</text>
+<text x="1172" y="793" font-size="11" fill="#374151" text-anchor="start">tiempo el núcleo está congelado.</text>
+<rect x="16" y="836" width="1568" height="510" rx="0" fill="#f1f3f6"/>
+<text x="32" y="862" font-size="15" fill="#2d333b" text-anchor="start" font-weight="700">C · Qué pasa cuando el HALT llega a WB (CMD_RUN)</text>
+<text x="32" y="881" font-size="12" fill="#6b7280" text-anchor="start">scripts/01_suma.asm · valores de una simulación del RTL real (debug_unit + riscv_core + dump_unit cableados como en riscv_uart_top) · cada columna = 1 ciclo · punteado = flanco de subida del clock</text>
+<rect x="570" y="908" width="140" height="314" rx="0" fill="#fde2e5"/>
+<rect x="710" y="908" width="140" height="314" rx="0" fill="#fbefd6"/>
+<rect x="1130" y="908" width="140" height="314" rx="0" fill="#e5e7eb"/>
+<rect x="1410" y="908" width="140" height="314" rx="0" fill="#dde9fb"/>
+<text x="360.0" y="902" font-size="12.5" fill="#2d333b" text-anchor="middle" font-weight="700">t−1</text>
+<text x="500.0" y="902" font-size="12.5" fill="#2d333b" text-anchor="middle" font-weight="700">t</text>
+<text x="640.0" y="902" font-size="12.5" fill="#2d333b" text-anchor="middle" font-weight="700">t+1  ①</text>
+<text x="780.0" y="902" font-size="12.5" fill="#2d333b" text-anchor="middle" font-weight="700">t+2  ②</text>
+<text x="920.0" y="902" font-size="12.5" fill="#2d333b" text-anchor="middle" font-weight="700">t+3</text>
+<text x="1060.0" y="902" font-size="12.5" fill="#2d333b" text-anchor="middle" font-weight="700">t+4</text>
+<text x="1200.0" y="902" font-size="12.5" fill="#2d333b" text-anchor="middle" font-weight="700">⋯</text>
+<text x="1340.0" y="902" font-size="12.5" fill="#2d333b" text-anchor="middle" font-weight="700">fin</text>
+<text x="1480.0" y="902" font-size="12.5" fill="#2d333b" text-anchor="middle" font-weight="700">fin+1  ③</text>
+<path d="M290,908 L290,1222" fill="none" stroke="#c3c9d2" stroke-width="1" stroke-dasharray="3 3"/>
+<path d="M430,908 L430,1222" fill="none" stroke="#c3c9d2" stroke-width="1" stroke-dasharray="3 3"/>
+<path d="M570,908 L570,1222" fill="none" stroke="#c3c9d2" stroke-width="1" stroke-dasharray="3 3"/>
+<path d="M710,908 L710,1222" fill="none" stroke="#c3c9d2" stroke-width="1" stroke-dasharray="3 3"/>
+<path d="M850,908 L850,1222" fill="none" stroke="#c3c9d2" stroke-width="1" stroke-dasharray="3 3"/>
+<path d="M990,908 L990,1222" fill="none" stroke="#c3c9d2" stroke-width="1" stroke-dasharray="3 3"/>
+<path d="M1130,908 L1130,1222" fill="none" stroke="#c3c9d2" stroke-width="1" stroke-dasharray="3 3"/>
+<path d="M1270,908 L1270,1222" fill="none" stroke="#c3c9d2" stroke-width="1" stroke-dasharray="3 3"/>
+<path d="M1410,908 L1410,1222" fill="none" stroke="#c3c9d2" stroke-width="1" stroke-dasharray="3 3"/>
+<path d="M1550,908 L1550,1222" fill="none" stroke="#c3c9d2" stroke-width="1" stroke-dasharray="3 3"/>
+<text x="276" y="933" font-size="12" fill="#2d333b" text-anchor="end">estado de la Debug Unit (A)</text>
+<polygon points="297,918 703,918 708,929 703,940 297,940 292,929" fill="#dcf5e3" stroke="#4b5563" stroke-width="1.1"/>
+<text x="500.0" y="933.5" font-size="11.5" fill="#2d333b" text-anchor="middle" font-weight="700" font-family="Consolas, 'DejaVu Sans Mono', 'Courier New', monospace">RUN_EXEC</text>
+<polygon points="717,918 843,918 848,929 843,940 717,940 712,929" fill="#e8ecf2" stroke="#4b5563" stroke-width="1.1"/>
+<text x="780.0" y="933.5" font-size="11.5" fill="#2d333b" text-anchor="middle" font-weight="700" font-family="Consolas, 'DejaVu Sans Mono', 'Courier New', monospace">DUMP_TRIG</text>
+<polygon points="857,918 1403,918 1408,929 1403,940 857,940 852,929" fill="#e8ecf2" stroke="#4b5563" stroke-width="1.1"/>
+<text x="1130.0" y="933.5" font-size="11.5" fill="#2d333b" text-anchor="middle" font-weight="700" font-family="Consolas, 'DejaVu Sans Mono', 'Courier New', monospace">DUMP_WAIT</text>
+<polygon points="1417,918 1543,918 1548,929 1543,940 1417,940 1412,929" fill="#e8ecf2" stroke="#4b5563" stroke-width="1.1"/>
+<text x="1480.0" y="933.5" font-size="11.5" fill="#2d333b" text-anchor="middle" font-weight="700" font-family="Consolas, 'DejaVu Sans Mono', 'Courier New', monospace">RECV_CMD</text>
+<text x="276" y="967" font-size="12" fill="#2d333b" text-anchor="end">etapa del primer HALT</text>
+<polygon points="297,952 423,952 428,963 423,974 297,974 292,963" fill="#ffffff" stroke="#4b5563" stroke-width="1.1"/>
+<text x="360.0" y="967.5" font-size="11.5" fill="#2d333b" text-anchor="middle" font-weight="700" font-family="Consolas, 'DejaVu Sans Mono', 'Courier New', monospace">EX</text>
+<polygon points="437,952 563,952 568,963 563,974 437,974 432,963" fill="#ffffff" stroke="#4b5563" stroke-width="1.1"/>
+<text x="500.0" y="967.5" font-size="11.5" fill="#2d333b" text-anchor="middle" font-weight="700" font-family="Consolas, 'DejaVu Sans Mono', 'Courier New', monospace">MEM</text>
+<polygon points="577,952 1543,952 1548,963 1543,974 577,974 572,963" fill="#ffffff" stroke="#4b5563" stroke-width="1.1"/>
+<text x="1060.0" y="967.5" font-size="11.5" fill="#2d333b" text-anchor="middle" font-weight="700" font-family="Consolas, 'DejaVu Sans Mono', 'Courier New', monospace">WB  (queda en MEM/WB)</text>
+<text x="276" y="1001" font-size="12" fill="#2d333b" text-anchor="end" font-family="Consolas, 'DejaVu Sans Mono', 'Courier New', monospace">core_halted  (MEM/WB.is_halt)</text>
+<path d="M290,1007 L290,1007 L430,1007 L430,1007 L570,1007 L570,987 L710,987 L710,987 L850,987 L850,987 L990,987 L990,987 L1130,987 L1130,987 L1270,987 L1270,987 L1410,987 L1410,987 L1550,987" fill="none" stroke="#d1293d" stroke-width="2.2"/>
+<text x="296" y="1002" font-size="10" fill="#d1293d" text-anchor="start" font-weight="700" font-family="Consolas, 'DejaVu Sans Mono', 'Courier New', monospace">0</text>
+<text x="576" y="1000" font-size="10" fill="#d1293d" text-anchor="start" font-weight="700" font-family="Consolas, 'DejaVu Sans Mono', 'Courier New', monospace">1</text>
+<text x="276" y="1035" font-size="12" fill="#2d333b" text-anchor="end" font-family="Consolas, 'DejaVu Sans Mono', 'Courier New', monospace">core_stall  (→ global_stall_i)</text>
+<path d="M290,1041 L290,1041 L430,1041 L430,1041 L570,1041 L570,1021 L710,1021 L710,1021 L850,1021 L850,1021 L990,1021 L990,1021 L1130,1021 L1130,1021 L1270,1021 L1270,1021 L1410,1021 L1410,1021 L1550,1021" fill="none" stroke="#a66a00" stroke-width="2.2"/>
+<text x="296" y="1036" font-size="10" fill="#a66a00" text-anchor="start" font-weight="700" font-family="Consolas, 'DejaVu Sans Mono', 'Courier New', monospace">0</text>
+<text x="576" y="1034" font-size="10" fill="#a66a00" text-anchor="start" font-weight="700" font-family="Consolas, 'DejaVu Sans Mono', 'Courier New', monospace">1</text>
+<text x="276" y="1069" font-size="12" fill="#2d333b" text-anchor="end" font-family="Consolas, 'DejaVu Sans Mono', 'Courier New', monospace">core_en  (dentro del núcleo)</text>
+<path d="M290,1055 L290,1055 L430,1055 L430,1055 L570,1055 L570,1075 L710,1075 L710,1075 L850,1075 L850,1075 L990,1075 L990,1075 L1130,1075 L1130,1075 L1270,1075 L1270,1075 L1410,1075 L1410,1075 L1550,1075" fill="none" stroke="#15803d" stroke-width="2.2"/>
+<text x="296" y="1068" font-size="10" fill="#15803d" text-anchor="start" font-weight="700" font-family="Consolas, 'DejaVu Sans Mono', 'Courier New', monospace">1</text>
+<text x="576" y="1070" font-size="10" fill="#15803d" text-anchor="start" font-weight="700" font-family="Consolas, 'DejaVu Sans Mono', 'Courier New', monospace">0</text>
+<text x="276" y="1103" font-size="12" fill="#2d333b" text-anchor="end" font-family="Consolas, 'DejaVu Sans Mono', 'Courier New', monospace">CYCLE_COUNT</text>
+<polygon points="297,1088 423,1088 428,1099 423,1110 297,1110 292,1099" fill="#ffffff" stroke="#4b5563" stroke-width="1.1"/>
+<text x="360.0" y="1103.5" font-size="11.5" fill="#2d333b" text-anchor="middle" font-weight="700" font-family="Consolas, 'DejaVu Sans Mono', 'Courier New', monospace">30</text>
+<polygon points="437,1088 563,1088 568,1099 563,1110 437,1110 432,1099" fill="#ffffff" stroke="#4b5563" stroke-width="1.1"/>
+<text x="500.0" y="1103.5" font-size="11.5" fill="#2d333b" text-anchor="middle" font-weight="700" font-family="Consolas, 'DejaVu Sans Mono', 'Courier New', monospace">31</text>
+<polygon points="577,1088 1543,1088 1548,1099 1543,1110 577,1110 572,1099" fill="#ffffff" stroke="#4b5563" stroke-width="1.1"/>
+<text x="1060.0" y="1103.5" font-size="11.5" fill="#2d333b" text-anchor="middle" font-weight="700" font-family="Consolas, 'DejaVu Sans Mono', 'Courier New', monospace">32  (queda fijo)</text>
+<text x="276" y="1137" font-size="12" fill="#2d333b" text-anchor="end" font-family="Consolas, 'DejaVu Sans Mono', 'Courier New', monospace">dump_trigger</text>
+<path d="M290,1143 L290,1143 L430,1143 L430,1143 L570,1143 L570,1143 L710,1143 L710,1123 L850,1123 L850,1143 L990,1143 L990,1143 L1130,1143 L1130,1143 L1270,1143 L1270,1143 L1410,1143 L1410,1143 L1550,1143" fill="none" stroke="#2d333b" stroke-width="2.2"/>
+<text x="296" y="1138" font-size="10" fill="#2d333b" text-anchor="start" font-weight="700" font-family="Consolas, 'DejaVu Sans Mono', 'Courier New', monospace">0</text>
+<text x="716" y="1136" font-size="10" fill="#2d333b" text-anchor="start" font-weight="700" font-family="Consolas, 'DejaVu Sans Mono', 'Courier New', monospace">1</text>
+<text x="856" y="1138" font-size="10" fill="#2d333b" text-anchor="start" font-weight="700" font-family="Consolas, 'DejaVu Sans Mono', 'Courier New', monospace">0</text>
+<text x="276" y="1171" font-size="12" fill="#2d333b" text-anchor="end">estado de la dump_unit (B)</text>
+<polygon points="297,1156 843,1156 848,1167 843,1178 297,1178 292,1167" fill="#ffffff" stroke="#4b5563" stroke-width="1.1"/>
+<text x="570.0" y="1171.5" font-size="11.5" fill="#2d333b" text-anchor="middle" font-weight="700" font-family="Consolas, 'DejaVu Sans Mono', 'Courier New', monospace">IDLE</text>
+<polygon points="857,1156 983,1156 988,1167 983,1178 857,1178 852,1167" fill="#ffffff" stroke="#4b5563" stroke-width="1.1"/>
+<text x="920.0" y="1171.5" font-size="11.5" fill="#2d333b" text-anchor="middle" font-weight="700" font-family="Consolas, 'DejaVu Sans Mono', 'Courier New', monospace">PREP_WORD</text>
+<polygon points="997,1156 1123,1156 1128,1167 1123,1178 997,1178 992,1167" fill="#ffffff" stroke="#4b5563" stroke-width="1.1"/>
+<text x="1060.0" y="1171.5" font-size="11.5" fill="#2d333b" text-anchor="middle" font-weight="700" font-family="Consolas, 'DejaVu Sans Mono', 'Courier New', monospace">SEND_BYTE</text>
+<polygon points="1137,1156 1263,1156 1268,1167 1263,1178 1137,1178 1132,1167" fill="#ffffff" stroke="#4b5563" stroke-width="1.1"/>
+<text x="1200.0" y="1171.5" font-size="11.5" fill="#2d333b" text-anchor="middle" font-weight="700" font-family="Consolas, 'DejaVu Sans Mono', 'Courier New', monospace">1244 bytes</text>
+<polygon points="1277,1156 1403,1156 1408,1167 1403,1178 1277,1178 1272,1167" fill="#ffffff" stroke="#4b5563" stroke-width="1.1"/>
+<text x="1340.0" y="1171.5" font-size="11.5" fill="#2d333b" text-anchor="middle" font-weight="700" font-family="Consolas, 'DejaVu Sans Mono', 'Courier New', monospace">DONE</text>
+<polygon points="1417,1156 1543,1156 1548,1167 1543,1178 1417,1178 1412,1167" fill="#ffffff" stroke="#4b5563" stroke-width="1.1"/>
+<text x="1480.0" y="1171.5" font-size="11.5" fill="#2d333b" text-anchor="middle" font-weight="700" font-family="Consolas, 'DejaVu Sans Mono', 'Courier New', monospace">IDLE</text>
+<text x="276" y="1205" font-size="12" fill="#2d333b" text-anchor="end" font-family="Consolas, 'DejaVu Sans Mono', 'Courier New', monospace">dump_done</text>
+<path d="M290,1211 L290,1211 L430,1211 L430,1211 L570,1211 L570,1211 L710,1211 L710,1211 L850,1211 L850,1211 L990,1211 L990,1211 L1130,1211 L1130,1211 L1270,1211 L1270,1191 L1410,1191 L1410,1211 L1550,1211" fill="none" stroke="#2d333b" stroke-width="2.2"/>
+<text x="296" y="1206" font-size="10" fill="#2d333b" text-anchor="start" font-weight="700" font-family="Consolas, 'DejaVu Sans Mono', 'Courier New', monospace">0</text>
+<text x="1276" y="1204" font-size="10" fill="#2d333b" text-anchor="start" font-weight="700" font-family="Consolas, 'DejaVu Sans Mono', 'Courier New', monospace">1</text>
+<text x="1416" y="1206" font-size="10" fill="#2d333b" text-anchor="start" font-weight="700" font-family="Consolas, 'DejaVu Sans Mono', 'Courier New', monospace">0</text>
+<text x="32" y="1252" font-size="13" fill="#d1293d" text-anchor="start" font-weight="700">① Mismo ciclo (t+1)</text>
+<text x="32" y="1272" font-size="12" fill="#374151" text-anchor="start">En RUN_EXEC, core_stall = core_halted es combinacional (:280).</text>
+<text x="32" y="1288" font-size="12" fill="#374151" text-anchor="start">Apenas el HALT aparece en MEM/WB, el núcleo queda congelado y</text>
+<text x="32" y="1304" font-size="12" fill="#374151" text-anchor="start">no avanza ni un flanco más: CYCLE_COUNT = 32, la duración real</text>
+<text x="32" y="1320" font-size="12" fill="#374151" text-anchor="start">del programa (no 33).</text>
+<text x="548" y="1252" font-size="13" fill="#a66a00" text-anchor="start" font-weight="700">② Un ciclo después (t+2)</text>
+<text x="548" y="1272" font-size="12" fill="#374151" text-anchor="start">RUN_EXEC → DUMP_TRIG: sale el pulso dump_trigger y la dump_unit</text>
+<text x="548" y="1288" font-size="12" fill="#374151" text-anchor="start">arranca (PREP_WORD, SEND_BYTE…). El volcado empieza con el</text>
+<text x="548" y="1304" font-size="12" fill="#374151" text-anchor="start">núcleo ya quieto: muestra el estado exacto del ciclo final,</text>
+<text x="548" y="1320" font-size="12" fill="#374151" text-anchor="start">aunque tarde ~108 ms en salir por la UART.</text>
+<text x="1064" y="1252" font-size="13" fill="#2563eb" text-anchor="start" font-weight="700">③ Al terminar el volcado (fin+1)</text>
+<text x="1064" y="1272" font-size="12" fill="#374151" text-anchor="start">dump_done → RECV_CMD, donde core_stall = 1 por defecto (:171).</text>
+<text x="1064" y="1288" font-size="12" fill="#374151" text-anchor="start">Un STEP o RUN posterior tampoco lo mueve: core_stall =</text>
+<text x="1064" y="1304" font-size="12" fill="#374151" text-anchor="start">core_halted = 1. Sólo un LOAD o un RESET (soft-reset) borran</text>
+<text x="1064" y="1320" font-size="12" fill="#374151" text-anchor="start">el HALT de MEM/WB y dejan arrancar de nuevo.</text>
+<rect x="16" y="1362" width="1568" height="282" rx="0" fill="#f1f3f6"/>
+<text x="32" y="1388" font-size="15" fill="#2d333b" text-anchor="start" font-weight="700">D · Un CMD_STEP a mitad del programa (5.º paso de 01_suma.asm)</text>
+<text x="32" y="1407" font-size="12" fill="#6b7280" text-anchor="start">misma simulación · cada columna = 1 ciclo</text>
+<rect x="390" y="1436" width="100" height="178" rx="0" fill="#e3f5e8"/>
+<rect x="690" y="1436" width="100" height="178" rx="0" fill="#e5e7eb"/>
+<text x="340.0" y="1430" font-size="12.5" fill="#2d333b" text-anchor="middle" font-weight="700">llega 0x21</text>
+<text x="440.0" y="1430" font-size="12.5" fill="#2d333b" text-anchor="middle" font-weight="700">+1</text>
+<text x="540.0" y="1430" font-size="12.5" fill="#2d333b" text-anchor="middle" font-weight="700">+2</text>
+<text x="640.0" y="1430" font-size="12.5" fill="#2d333b" text-anchor="middle" font-weight="700">+3</text>
+<text x="740.0" y="1430" font-size="12.5" fill="#2d333b" text-anchor="middle" font-weight="700">⋯</text>
+<text x="840.0" y="1430" font-size="12.5" fill="#2d333b" text-anchor="middle" font-weight="700">fin</text>
+<text x="940.0" y="1430" font-size="12.5" fill="#2d333b" text-anchor="middle" font-weight="700">fin+1</text>
+<path d="M290,1436 L290,1614" fill="none" stroke="#c3c9d2" stroke-width="1" stroke-dasharray="3 3"/>
+<path d="M390,1436 L390,1614" fill="none" stroke="#c3c9d2" stroke-width="1" stroke-dasharray="3 3"/>
+<path d="M490,1436 L490,1614" fill="none" stroke="#c3c9d2" stroke-width="1" stroke-dasharray="3 3"/>
+<path d="M590,1436 L590,1614" fill="none" stroke="#c3c9d2" stroke-width="1" stroke-dasharray="3 3"/>
+<path d="M690,1436 L690,1614" fill="none" stroke="#c3c9d2" stroke-width="1" stroke-dasharray="3 3"/>
+<path d="M790,1436 L790,1614" fill="none" stroke="#c3c9d2" stroke-width="1" stroke-dasharray="3 3"/>
+<path d="M890,1436 L890,1614" fill="none" stroke="#c3c9d2" stroke-width="1" stroke-dasharray="3 3"/>
+<path d="M990,1436 L990,1614" fill="none" stroke="#c3c9d2" stroke-width="1" stroke-dasharray="3 3"/>
+<path d="M490,1436 L490,1614" fill="none" stroke="#15803d" stroke-width="2.4" stroke-dasharray="6 3"/>
+<text x="490" y="1630" font-size="11" fill="#15803d" text-anchor="middle" font-weight="700">único flanco con core_en = 1</text>
+<text x="276" y="1461" font-size="12" fill="#2d333b" text-anchor="end">estado de la Debug Unit (A)</text>
+<polygon points="297,1446 383,1446 388,1457 383,1468 297,1468 292,1457" fill="#e8ecf2" stroke="#4b5563" stroke-width="1.1"/>
+<text x="340.0" y="1461.5" font-size="11.5" fill="#2d333b" text-anchor="middle" font-weight="700" font-family="Consolas, 'DejaVu Sans Mono', 'Courier New', monospace">RECV_CMD</text>
+<polygon points="397,1446 483,1446 488,1457 483,1468 397,1468 392,1457" fill="#dcf5e3" stroke="#4b5563" stroke-width="1.1"/>
+<text x="440.0" y="1461.5" font-size="11.5" fill="#2d333b" text-anchor="middle" font-weight="700" font-family="Consolas, 'DejaVu Sans Mono', 'Courier New', monospace">STEP_EXEC</text>
+<polygon points="497,1446 583,1446 588,1457 583,1468 497,1468 492,1457" fill="#e8ecf2" stroke="#4b5563" stroke-width="1.1"/>
+<text x="540.0" y="1461.5" font-size="11.5" fill="#2d333b" text-anchor="middle" font-weight="700" font-family="Consolas, 'DejaVu Sans Mono', 'Courier New', monospace">DUMP_TRIG</text>
+<polygon points="597,1446 883,1446 888,1457 883,1468 597,1468 592,1457" fill="#e8ecf2" stroke="#4b5563" stroke-width="1.1"/>
+<text x="740.0" y="1461.5" font-size="11.5" fill="#2d333b" text-anchor="middle" font-weight="700" font-family="Consolas, 'DejaVu Sans Mono', 'Courier New', monospace">DUMP_WAIT</text>
+<polygon points="897,1446 983,1446 988,1457 983,1468 897,1468 892,1457" fill="#e8ecf2" stroke="#4b5563" stroke-width="1.1"/>
+<text x="940.0" y="1461.5" font-size="11.5" fill="#2d333b" text-anchor="middle" font-weight="700" font-family="Consolas, 'DejaVu Sans Mono', 'Courier New', monospace">RECV_CMD</text>
+<text x="276" y="1495" font-size="12" fill="#2d333b" text-anchor="end" font-family="Consolas, 'DejaVu Sans Mono', 'Courier New', monospace">core_stall  (→ global_stall_i)</text>
+<path d="M290,1481 L290,1481 L390,1481 L390,1501 L490,1501 L490,1481 L590,1481 L590,1481 L690,1481 L690,1481 L790,1481 L790,1481 L890,1481 L890,1481 L990,1481" fill="none" stroke="#a66a00" stroke-width="2.2"/>
+<text x="296" y="1494" font-size="10" fill="#a66a00" text-anchor="start" font-weight="700" font-family="Consolas, 'DejaVu Sans Mono', 'Courier New', monospace">1</text>
+<text x="396" y="1496" font-size="10" fill="#a66a00" text-anchor="start" font-weight="700" font-family="Consolas, 'DejaVu Sans Mono', 'Courier New', monospace">0</text>
+<text x="496" y="1494" font-size="10" fill="#a66a00" text-anchor="start" font-weight="700" font-family="Consolas, 'DejaVu Sans Mono', 'Courier New', monospace">1</text>
+<text x="276" y="1529" font-size="12" fill="#2d333b" text-anchor="end" font-family="Consolas, 'DejaVu Sans Mono', 'Courier New', monospace">CYCLE_COUNT</text>
+<polygon points="297,1514 483,1514 488,1525 483,1536 297,1536 292,1525" fill="#ffffff" stroke="#4b5563" stroke-width="1.1"/>
+<text x="390.0" y="1529.5" font-size="11.5" fill="#2d333b" text-anchor="middle" font-weight="700" font-family="Consolas, 'DejaVu Sans Mono', 'Courier New', monospace">4</text>
+<polygon points="497,1514 983,1514 988,1525 983,1536 497,1536 492,1525" fill="#ffffff" stroke="#4b5563" stroke-width="1.1"/>
+<text x="740.0" y="1529.5" font-size="11.5" fill="#2d333b" text-anchor="middle" font-weight="700" font-family="Consolas, 'DejaVu Sans Mono', 'Courier New', monospace">5</text>
+<text x="276" y="1563" font-size="12" fill="#2d333b" text-anchor="end">PC (etapa IF)</text>
+<polygon points="297,1548 483,1548 488,1559 483,1570 297,1570 292,1559" fill="#ffffff" stroke="#4b5563" stroke-width="1.1"/>
+<text x="390.0" y="1563.5" font-size="11.5" fill="#2d333b" text-anchor="middle" font-weight="700" font-family="Consolas, 'DejaVu Sans Mono', 'Courier New', monospace">16</text>
+<polygon points="497,1548 983,1548 988,1559 983,1570 497,1570 492,1559" fill="#ffffff" stroke="#4b5563" stroke-width="1.1"/>
+<text x="740.0" y="1563.5" font-size="11.5" fill="#2d333b" text-anchor="middle" font-weight="700" font-family="Consolas, 'DejaVu Sans Mono', 'Courier New', monospace">20</text>
+<text x="276" y="1597" font-size="12" fill="#2d333b" text-anchor="end" font-family="Consolas, 'DejaVu Sans Mono', 'Courier New', monospace">dump_trigger</text>
+<path d="M290,1603 L290,1603 L390,1603 L390,1603 L490,1603 L490,1583 L590,1583 L590,1603 L690,1603 L690,1603 L790,1603 L790,1603 L890,1603 L890,1603 L990,1603" fill="none" stroke="#2d333b" stroke-width="2.2"/>
+<text x="296" y="1598" font-size="10" fill="#2d333b" text-anchor="start" font-weight="700" font-family="Consolas, 'DejaVu Sans Mono', 'Courier New', monospace">0</text>
+<text x="496" y="1596" font-size="10" fill="#2d333b" text-anchor="start" font-weight="700" font-family="Consolas, 'DejaVu Sans Mono', 'Courier New', monospace">1</text>
+<text x="596" y="1598" font-size="10" fill="#2d333b" text-anchor="start" font-weight="700" font-family="Consolas, 'DejaVu Sans Mono', 'Courier New', monospace">0</text>
+<text x="1030" y="1446" font-size="13" fill="#15803d" text-anchor="start" font-weight="700">Un STEP = un solo flanco con el núcleo libre</text>
+<text x="1030" y="1465" font-size="12" fill="#374151" text-anchor="start">STEP_EXEC dura exactamente un ciclo (:293-298): ahí core_stall = 0, y en</text>
+<text x="1030" y="1484" font-size="12" fill="#374151" text-anchor="start">el flanco que lo cierra el núcleo avanza una vez (CYCLE_COUNT 4 → 5,</text>
+<text x="1030" y="1503" font-size="12" fill="#374151" text-anchor="start">PC 16 → 20). Al ciclo siguiente DUMP_TRIG ya lo congela otra vez, y el</text>
+<text x="1030" y="1522" font-size="12" fill="#374151" text-anchor="start">volcado muestra el estado justo después de ese ciclo.</text>
+<text x="1030" y="1549" font-size="12" fill="#374151" text-anchor="start">Si el programa ya terminó, en STEP_EXEC también vale core_stall =</text>
+<text x="1030" y="1568" font-size="12" fill="#374151" text-anchor="start">core_halted = 1: el STEP no avanza nada, sólo vuelca.</text>
+</svg>
